@@ -5,8 +5,9 @@
   "description": "Sistema Corta Fecha - Automatización del Control de Productos Próximos a Vencer y Averiados",
   "scripts": {
     "dev": "next dev --turbopack -H 0.0.0.0",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start -H 0.0.0.0",
+    "postinstall": "prisma generate",
     "lint": "eslint",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
