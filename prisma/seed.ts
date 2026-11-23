@@ -29,12 +29,12 @@ async function main() {
   });
 
   const initialPassword =
-    process.env.INITIAL_OPERATOR_PASSWORD || "Distrimarcas2026*";
+    process.env.INITIAL_OPERATOR_PASSWORD || "maira123";
 
   const user = await prisma.user.create({
     data: {
-      username: "encargada",
-      fullName: "Encargada Distrimarcas",
+      username: "mayra",
+      fullName: "Mayra",
       role: "Encargada de Corta Fecha",
       passwordHash: hashPassword(initialPassword),
       active: true,
