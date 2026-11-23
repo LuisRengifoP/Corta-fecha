@@ -1,0 +1,16 @@
+# Dependencias y build
+/node_modules
+/.next/
+/out/
+/build
+
+# Variables de entorno y base local
+.env*.local
+prisma/dev.db
+prisma/dev.db-journal
+
+# Logs y temporales
+npm-debug.log*
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts

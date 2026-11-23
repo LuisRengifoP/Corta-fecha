@@ -1,0 +1,183 @@
+// Esquema relacional del Sistema Corta Fecha — Distrimarcas
+// Compatible con SQLite en desarrollo local y PostgreSQL en produccion.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  fullName     String
+  role         String   @default("Encargada de Corta Fecha")
+  passwordHash String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Warehouse {
+  id             String          @id @default(cuid())
+  code           String          @unique
+  name           String
+  location       String
+  manager        String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  lots           InventoryLot[]
+  inspections    Inspection[]
+  damagedRecords DamagedRecord[]
+}
+
+model Supplier {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+}
+
+model Product {
+  id                 String          @id @default(cuid())
+  sku                String          @unique
+  barcode            String?
+  name               String
+  category           String
+  brand              String?
+  supplierId         String?
+  supplier           Supplier?       @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  unitsPerBox        Int             @default(1)
+  unitsPerPack       Int?
+  unitsPerDispack    Int?
+  unitsPerDisplay    Int?
+  unitsPerBag        Int?
+  unitCost           Float           @default(0)
+  alertThresholdDays Int             @default(30)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  lots               InventoryLot[]
+  damagedRecords     DamagedRecord[]
+
+  @@index([supplierId])
+}
+
+model InventoryLot {
+  id              String          @id @default(cuid())
+  lotNumber       String
+  productId       String
+  warehouseId     String
+  boxes           Int             @default(0)
+  packs           Int             @default(0)
+  dispacks        Int             @default(0)
+  displays        Int             @default(0)
+  bags            Int             @default(0)
+  looseUnits      Int             @default(0)
+  totalUnits      Int             @default(0)
+  quantityText    String          @default("0 UN")
+  expiryDate      DateTime
+  expiryPrecision String          @default("EXACTA")
+  expiryDisplay   String?
+  entryDate       DateTime        @default(now())
+  locationCode    String?
+  status          String          @default("ACTIVO")
+  lastInspectedAt DateTime?
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  product         Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse       Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  inspections     Inspection[]
+  damagedRecords  DamagedRecord[]
+  alerts          Alert[]
+
+  @@unique([productId, warehouseId, lotNumber])
+  @@index([expiryDate])
+  @@index([status])
+}
+
+model Inspection {
+  id               String        @id @default(cuid())
+  warehouseId      String
+  lotId            String?
+  inspectorName    String
+  inspectionType   String        @default("PROGRAMADA")
+  status           String        @default("APROBADA")
+  checkedBoxes     Int           @default(0)
+  checkedUnits     Int           @default(0)
+  expiryVerified   Boolean       @default(true)
+  findings         String
+  correctiveAction String?
+  inspectedAt      DateTime      @default(now())
+  createdAt        DateTime      @default(now())
+  warehouse        Warehouse     @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  lot              InventoryLot? @relation(fields: [lotId], references: [id], onDelete: SetNull)
+
+  @@index([inspectedAt])
+  @@index([status])
+}
+
+model DamagedRecord {
+  id               String       @id @default(cuid())
+  lotId            String
+  productId        String
+  warehouseId      String
+  reportedBy       String
+  damageType       String
+  severity         String       @default("MODERADA")
+  boxesAffected    Int          @default(0)
+  unitsAffected    Int          @default(0)
+  estimatedLoss    Float        @default(0)
+  actionTaken      String       @default("CUARENTENA")
+  resolutionStatus String       @default("PENDIENTE")
+  stockDeducted    Boolean      @default(true)
+  notes            String?
+  reportedAt       DateTime     @default(now())
+  resolvedAt       DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  lot              InventoryLot @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  product          Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse        Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([resolutionStatus])
+  @@index([reportedAt])
+}
+
+model Alert {
+  id             String        @id @default(cuid())
+  lotId          String?
+  type           String
+  severity       String
+  title          String
+  message        String
+  daysToExpiry   Int?
+  acknowledged   Boolean       @default(false)
+  acknowledgedBy String?
+  acknowledgedAt DateTime?
+  emailSentAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  lot            InventoryLot? @relation(fields: [lotId], references: [id], onDelete: Cascade)
+
+  @@index([acknowledged])
+  @@index([severity])
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String?
+  action     String
+  actor      String
+  summary    String
+  details    String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType])
+  @@index([createdAt])
+}
