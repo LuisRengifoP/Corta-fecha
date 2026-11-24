@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ClipboardCheck,
   FileSpreadsheet,
+  FileText,
   Plus,
   Search,
   Trash2,
@@ -302,7 +303,7 @@ export default function InspeccionesPage() {
               }));
               setShowModal(true);
             }}
-            className="ui-btn ui-btn-primary"
+            className="ui-btn ui-btn-primary col-span-2 sm:col-span-1"
           >
             <Plus className="h-4 w-4 shrink-0" />
             <span className="truncate">Nueva Inspección</span>
@@ -312,7 +313,14 @@ export default function InspeccionesPage() {
             className="ui-btn ui-btn-emerald"
           >
             <FileSpreadsheet className="h-4 w-4 shrink-0" />
-            <span className="truncate">Exportar Excel</span>
+            <span className="truncate">Excel</span>
+          </a>
+          <a
+            href="/api/reports/export?type=inspections&format=pdf"
+            className="ui-btn ui-btn-rose"
+          >
+            <FileText className="h-4 w-4 shrink-0" />
+            <span className="truncate">PDF</span>
           </a>
         </div>
       </div>

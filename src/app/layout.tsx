@@ -18,6 +18,14 @@ export const metadata: Metadata = {
   title: "Corta Fecha | Control de Vencimientos y Bodegas",
   description:
     "Sistema tecnológico para la identificación, control y seguimiento de productos próximos a vencer y averiados en bodega.",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "16x16 32x32" },
+      { url: "/icon.png", type: "image/png", sizes: "256x256" },
+    ],
+    shortcut: "/favicon.ico",
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",

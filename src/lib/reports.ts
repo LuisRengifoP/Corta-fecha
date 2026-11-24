@@ -1,7 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
-import PDFDocument from "pdfkit";
+import PDFDocument, { registerStdFonts } from "pdfkit";
+import Helvetica from "pdfkit/standard-fonts/Helvetica";
+import HelveticaBold from "pdfkit/standard-fonts/HelveticaBold";
+import HelveticaOblique from "pdfkit/standard-fonts/HelveticaOblique";
+import HelveticaBoldOblique from "pdfkit/standard-fonts/HelveticaBoldOblique";
+
+let stdFontsRegistered = false;
+function ensurePdfStdFonts() {
+  if (stdFontsRegistered) return;
+  if (typeof registerStdFonts === "function") {
+    registerStdFonts(
+      Helvetica,
+      HelveticaBold,
+      HelveticaOblique,
+      HelveticaBoldOblique
+    );
+  }
+  stdFontsRegistered = true;
+}
 
 const MONTHS_ES_TITLE = [
   "Ene",
@@ -286,6 +304,7 @@ export async function generateDistrimarcasTablePdf(params: {
     showProviderLine = true,
   } = params;
 
+  ensurePdfStdFonts();
   const logoBuffer = loadDistrimarcasLogo();
 
   return new Promise((resolve, reject) => {
@@ -305,9 +324,16 @@ export async function generateDistrimarcasTablePdf(params: {
     const pageBottomY = doc.page.height - 34;
 
     const drawHeader = (): number => {
+      let logoDrawn = false;
       if (logoBuffer) {
-        doc.image(logoBuffer, startX, 24, { width: 240 });
-      } else {
+        try {
+          doc.image(logoBuffer, startX, 24, { width: 240 });
+          logoDrawn = true;
+        } catch {
+          logoDrawn = false;
+        }
+      }
+      if (!logoDrawn) {
         doc
           .font("Helvetica-Bold")
           .fontSize(14)

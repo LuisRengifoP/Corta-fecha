@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FileSpreadsheet, FilterX, History, Search } from "lucide-react";
+import { FileSpreadsheet, FileText, FilterX, History, Search } from "lucide-react";
 import { Pagination } from "@/components/Pagination";
 import { fetchWithCache, getCached } from "@/lib/client-cache";
 import { ENTITY_TYPE_LABELS, formatDateTimeES } from "@/lib/constants";
@@ -95,13 +95,22 @@ export default function HistorialPage() {
             averías, alertas atendidas y descargas de reportes.
           </p>
         </div>
-        <a
-          href="/api/reports/export?type=activity"
-          className="ui-btn ui-btn-emerald w-full sm:w-auto"
-        >
-          <FileSpreadsheet className="h-4 w-4" />
-          Exportar Auditoría (.xlsx)
-        </a>
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          <a
+            href="/api/reports/export?type=activity"
+            className="ui-btn ui-btn-emerald"
+          >
+            <FileSpreadsheet className="h-4 w-4 shrink-0" />
+            <span className="truncate">Excel (.xlsx)</span>
+          </a>
+          <a
+            href="/api/reports/export?type=activity&format=pdf"
+            className="ui-btn ui-btn-rose"
+          >
+            <FileText className="h-4 w-4 shrink-0" />
+            <span className="truncate">PDF (.pdf)</span>
+          </a>
+        </div>
       </div>
 
       {/* Filtros */}

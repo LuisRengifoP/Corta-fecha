@@ -569,13 +569,22 @@ export default function DashboardPage() {
               Ordenados por fecha de vencimiento más próxima (criterio FEFO).
             </p>
           </div>
-          <a
-            href="/api/reports/export?type=expiring&days=30"
-            className="ui-btn ui-btn-emerald-soft py-1.5 text-xs"
-          >
-            <FileSpreadsheet className="h-4 w-4" />
-            Descargar Excel próximos ≤30d
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href="/api/reports/export?type=expiring&days=30"
+              className="ui-btn ui-btn-emerald-soft py-1.5 text-xs"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              Excel próximos ≤30d
+            </a>
+            <a
+              href="/api/reports/export?type=expiring&days=30&format=pdf"
+              className="ui-btn ui-btn-rose-soft py-1.5 text-xs"
+            >
+              <FileText className="h-4 w-4" />
+              PDF próximos ≤30d
+            </a>
+          </div>
         </div>
 
         {/* Vista móvil en tarjetas */}

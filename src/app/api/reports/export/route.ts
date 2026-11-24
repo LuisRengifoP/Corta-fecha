@@ -102,7 +102,11 @@ export async function GET(req: NextRequest) {
       req.nextUrl.searchParams.get("format")?.toLowerCase() === "pdf"
         ? "pdf"
         : "xlsx";
-    const days = Math.max(1, Number(req.nextUrl.searchParams.get("days") ?? 30));
+    const parsedDays = Number(req.nextUrl.searchParams.get("days") ?? 30);
+    const days =
+      Number.isFinite(parsedDays) && parsedDays > 0
+        ? Math.floor(parsedDays)
+        : 30;
     const warehouseId = req.nextUrl.searchParams.get("warehouseId") ?? "";
     const providerText = (req.nextUrl.searchParams.get("provider") ?? "").trim();
 
@@ -152,7 +156,7 @@ export async function GET(req: NextRequest) {
         const rows = selectedLots.map(lotToPlanillaRow);
         const title =
           type === "expiring"
-            ? `PRODUCTOS PRÓXIMOS A VENCER (≤ ${days} DÍAS)`
+            ? `PRODUCTOS PRÓXIMOS A VENCER (<= ${days} DÍAS)`
             : type === "general"
             ? "INVENTARIO GENERAL CORTA FECHA"
             : "PRODUCTOS CORTA FECHA";
@@ -269,6 +273,7 @@ export async function GET(req: NextRequest) {
         headers: {
           "Content-Type": "application/pdf",
           "Content-Disposition": `attachment; filename="${filename}"`,
+          "Cache-Control": "no-store",
         },
       });
     }

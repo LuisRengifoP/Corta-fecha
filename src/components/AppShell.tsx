@@ -1,11 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
   Bell,
   ClipboardCheck,
   FileSpreadsheet,
@@ -369,18 +369,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen bg-[var(--cf-bg)]">
       {/* Sidebar Desktop */}
       <aside className="hidden w-68 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:sticky lg:top-0 lg:flex lg:h-screen">
-        <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-sm">
-            <AlertTriangle className="h-5 w-5" />
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-base font-bold tracking-tight text-slate-900 dark:text-slate-100">
-              Corta Fecha
-            </p>
-            <p className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">
-              Distrimarcas S.A.S.
-            </p>
-          </div>
+        <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+          <Link href="/" className="group block space-y-2.5">
+            <div className="overflow-hidden rounded-xl border border-slate-200/90 bg-white px-2.5 py-1.5 shadow-2xs transition-shadow group-hover:shadow-sm dark:border-slate-700">
+              <Image
+                src="/images/distrimarcas-logo.jpg"
+                alt="Distrimarcas S.A.S."
+                width={1024}
+                height={341}
+                priority
+                className="h-11 w-full object-contain"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-2 px-0.5">
+              <div className="min-w-0">
+                <p className="truncate text-base font-bold tracking-tight text-slate-900 dark:text-slate-100">
+                  Corta Fecha
+                </p>
+                <p className="truncate text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                  Distrimarcas S.A.S.
+                </p>
+              </div>
+              <span className="shrink-0 rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300">
+                Bodega
+              </span>
+            </div>
+          </Link>
         </div>
         <div className="flex-1 overflow-y-auto">{renderLinks()}</div>
         {renderUserFooter()}
@@ -426,10 +440,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex min-w-0 items-center gap-2.5">
             <Link
               href="/"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-xs"
+              className="flex h-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white px-1.5 py-1 shadow-xs dark:border-slate-700"
               aria-label="Ir al inicio"
             >
-              <AlertTriangle className="h-4 w-4" />
+              <Image
+                src="/images/distrimarcas-logo.jpg"
+                alt="Distrimarcas S.A.S."
+                width={1024}
+                height={341}
+                priority
+                className="h-7 w-auto max-w-[92px] object-contain"
+              />
             </Link>
             <div className="min-w-0">
               <p className="truncate text-sm font-bold leading-tight text-slate-900 dark:text-slate-100">
@@ -472,8 +493,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <div className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-slate-300 dark:bg-slate-700" />
               <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
                 <div className="flex items-center gap-2.5">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white">
-                    <AlertTriangle className="h-4 w-4" />
+                  <div className="flex h-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white px-1.5 py-1 dark:border-slate-700">
+                    <Image
+                      src="/images/distrimarcas-logo.jpg"
+                      alt="Distrimarcas S.A.S."
+                      width={1024}
+                      height={341}
+                      className="h-7 w-auto max-w-[92px] object-contain"
+                    />
                   </div>
                   <div>
                     <p className="text-sm font-bold leading-tight text-slate-900 dark:text-slate-100">

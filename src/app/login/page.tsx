@@ -1,10 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { invalidateCache } from "@/lib/client-cache";
 import {
-  AlertTriangle,
   CheckCircle2,
   Eye,
   EyeOff,
@@ -59,9 +59,16 @@ export default function LoginPage() {
       <div className="cf-animate-modal w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         {/* Cabecera corporativa */}
         <div className="border-b border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950 px-6 py-6 text-white">
-          <div className="flex items-center gap-3.5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-500 text-white shadow-md shadow-indigo-500/30">
-              <AlertTriangle className="h-6 w-6" />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+            <div className="w-fit overflow-hidden rounded-xl bg-white px-2.5 py-1.5 shadow-md">
+              <Image
+                src="/images/distrimarcas-logo.jpg"
+                alt="Distrimarcas S.A.S."
+                width={1024}
+                height={341}
+                priority
+                className="h-10 w-auto max-w-[140px] object-contain"
+              />
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-indigo-300">
