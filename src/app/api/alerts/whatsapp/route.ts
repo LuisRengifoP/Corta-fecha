@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
               "VENCIMIENTO_PREVENTIVO",
             ],
           },
-          daysToExpiry: { lte: 30 },
+          daysToExpiry: { lte: 60 },
         },
         data: { emailSentAt: now },
       });

@@ -137,7 +137,7 @@ export default function InventarioPage() {
     unitsPerDisplay: "",
     unitsPerBag: "",
     unitCost: 0,
-    alertThresholdDays: 30,
+    alertThresholdDays: 60,
   });
 
   const [lotForm, setLotForm] = useState({
@@ -304,7 +304,7 @@ export default function InventarioPage() {
         unitsPerDisplay: "",
         unitsPerBag: "",
         unitCost: 0,
-        alertThresholdDays: 30,
+        alertThresholdDays: 60,
       });
       notify({
         title: "Producto agregado al catálogo",

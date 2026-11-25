@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { logActivity, syncAlertsAndStatuses } from "@/lib/corta-fecha";
 import { getWhatsAppConfigStatus } from "@/lib/whatsapp";
+import { getTelegramConfigStatus } from "@/lib/telegram";
 
 export async function GET(req: NextRequest) {
   try {
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest) {
     });
 
     const whatsappCfg = getWhatsAppConfigStatus();
+    const telegramCfg = getTelegramConfigStatus();
 
     return NextResponse.json({
       alerts,
@@ -42,6 +44,11 @@ export async function GET(req: NextRequest) {
         provider: whatsappCfg.provider,
         recipient: whatsappCfg.recipient,
         displayRecipient: whatsappCfg.displayRecipient,
+      },
+      telegramConfig: {
+        configured: telegramCfg.configured,
+        chatIds: telegramCfg.chatIds,
+        displayRecipient: telegramCfg.displayRecipient,
       },
     });
   } catch (error) {

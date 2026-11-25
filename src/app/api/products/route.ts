@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
     const unitCost = Math.max(0, Number(body.unitCost ?? 0));
     const alertThresholdDays = Math.max(
       1,
-      Math.floor(Number(body.alertThresholdDays ?? 30))
+      Math.floor(Number(body.alertThresholdDays ?? 60))
     );
 
     if (!sku || !name) {

@@ -11,6 +11,7 @@ import {
   ExternalLink,
   MessageCircle,
   RefreshCw,
+  Send,
   ShieldAlert,
   Trash2,
 } from "lucide-react";
@@ -26,6 +27,12 @@ interface WhatsAppConfigInfo {
   configured: boolean;
   provider: string;
   recipient: string;
+  displayRecipient: string;
+}
+
+interface TelegramConfigInfo {
+  configured: boolean;
+  chatIds: string[];
   displayRecipient: string;
 }
 
@@ -54,6 +61,7 @@ interface AlertItem {
 interface AlertsResponse {
   alerts: AlertItem[];
   whatsappConfig?: WhatsAppConfigInfo;
+  telegramConfig?: TelegramConfigInfo;
 }
 
 export default function AlertasPage() {
@@ -80,9 +88,14 @@ export default function AlertasPage() {
     useState<WhatsAppConfigInfo | null>(
       () => getCached<AlertsResponse>("alerts:false:")?.whatsappConfig ?? null
     );
+  const [telegramConfig, setTelegramConfig] =
+    useState<TelegramConfigInfo | null>(
+      () => getCached<AlertsResponse>("alerts:false:")?.telegramConfig ?? null
+    );
   const [loading, setLoading] = useState(() => !getCached("alerts:false:"));
   const [syncing, setSyncing] = useState(false);
   const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
+  const [sendingTelegram, setSendingTelegram] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
   const [deletingAlert, setDeletingAlert] = useState<AlertItem | null>(null);
@@ -122,6 +135,7 @@ export default function AlertasPage() {
         if (json) {
           setAlerts(json.alerts);
           if (json.whatsappConfig) setWhatsappConfig(json.whatsappConfig);
+          if (json.telegramConfig) setTelegramConfig(json.telegramConfig);
         }
       } finally {
         setLoading(false);
@@ -153,13 +167,17 @@ export default function AlertasPage() {
       if (res.ok) {
         const j = await res.json();
         const waInfo = j.result.whatsappResult;
-        let waMsg = "";
-        if (waInfo?.sent) {
-          waMsg = ` WhatsApp enviado a ${waInfo.displayRecipient} (${waInfo.count} alerta(s)).`;
-        } else if (waInfo?.waUrl && waInfo.count > 0) {
-          waMsg = ` Lista para enviar por WhatsApp a ${waInfo.displayRecipient} (${waInfo.count} alerta(s)).`;
+        const tgInfo = j.result.telegramResult;
+        let extraMsg = "";
+        if (tgInfo?.sent) {
+          extraMsg += ` Telegram enviado (${tgInfo.count} alerta(s)).`;
         }
-        const text = `Escaneo finalizado: ${j.result.scannedLots} lotes evaluados, ${j.result.createdAlerts} alertas nuevas, ${j.result.resolvedAlerts} cerradas automáticamente.${waMsg}`;
+        if (waInfo?.sent) {
+          extraMsg += ` WhatsApp enviado a ${waInfo.displayRecipient} (${waInfo.count} alerta(s)).`;
+        } else if (waInfo?.waUrl && waInfo.count > 0) {
+          extraMsg += ` Lista para enviar por WhatsApp a ${waInfo.displayRecipient} (${waInfo.count} alerta(s)).`;
+        }
+        const text = `Escaneo finalizado: ${j.result.scannedLots} lotes evaluados, ${j.result.createdAlerts} alertas nuevas, ${j.result.resolvedAlerts} cerradas automáticamente.${extraMsg}`;
         setBanner({ type: "info", text });
         notify({
           title: "Escaneo de alertas completado",
@@ -196,7 +214,7 @@ export default function AlertasPage() {
       }
       const waResult = j.whatsappResult;
       if (waResult?.sent) {
-        const okText = `Resumen enviado por WhatsApp a ${waResult.displayRecipient} (${waResult.count} lote(s) con ≤ 30 días).`;
+        const okText = `Resumen enviado por WhatsApp a ${waResult.displayRecipient} (${waResult.count} lote(s) con ≤ 60 días).`;
         setBanner({ type: "info", text: okText });
         notify({
           title: "WhatsApp enviado",
@@ -217,11 +235,58 @@ export default function AlertasPage() {
           type: "info",
           text:
             waResult?.reason ||
-            "No hay alertas activas con ≤ 30 días para enviar.",
+            "No hay alertas activas con ≤ 60 días para enviar.",
         });
       }
     } finally {
       setSendingWhatsApp(false);
+    }
+  };
+
+  const handleSendSummaryTelegram = async () => {
+    setSendingTelegram(true);
+    setBanner(null);
+    try {
+      const res = await fetch("/api/alerts/telegram", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actor: actorName, onlyUnsent: false }),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        const errText =
+          j.error || "No se pudo enviar la notificación por Telegram.";
+        setBanner({ type: "warn", text: errText });
+        notify({
+          title: "Error en envío Telegram",
+          description: errText,
+          variant: "error",
+        });
+        return;
+      }
+      const tgResult = j.telegramResult;
+      if (tgResult?.sent) {
+        const okText = `Resumen enviado por Telegram (Chat ${tgResult.displayRecipient}) con ${tgResult.count} lote(s) con ≤ 60 días.`;
+        setBanner({ type: "info", text: okText });
+        notify({
+          title: "Telegram enviado",
+          description: okText,
+          variant: "success",
+        });
+        await reloadAfterMutation();
+      } else {
+        const warnText =
+          tgResult?.reason ||
+          "No hay alertas activas con ≤ 60 días para enviar.";
+        setBanner({ type: "warn", text: warnText });
+        notify({
+          title: "Telegram pendiente o sin alertas",
+          description: warnText,
+          variant: "info",
+        });
+      }
+    } finally {
+      setSendingTelegram(false);
     }
   };
 
@@ -312,10 +377,19 @@ export default function AlertasPage() {
           </h1>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
             Detección automática de lotes vencidos, críticos (≤15 días) y
-            próximos a vencer (≤30 días) con notificación a WhatsApp.
+            próximos a vencer (≤60 días) con notificación a Telegram y WhatsApp.
           </p>
         </div>
         <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+          <button
+            type="button"
+            onClick={handleSendSummaryTelegram}
+            disabled={sendingTelegram}
+            className="ui-btn ui-btn-secondary w-full border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 dark:border-sky-900/70 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-950 sm:w-auto"
+          >
+            <Send className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+            {sendingTelegram ? "Enviando..." : "Enviar por Telegram"}
+          </button>
           <button
             type="button"
             onClick={handleSendSummaryWhatsApp}
@@ -323,7 +397,7 @@ export default function AlertasPage() {
             className="ui-btn ui-btn-emerald-soft w-full sm:w-auto"
           >
             <MessageCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-            {sendingWhatsApp ? "Preparando..." : "Enviar Resumen por WhatsApp"}
+            {sendingWhatsApp ? "Preparando..." : "Enviar por WhatsApp"}
           </button>
           <button
             type="button"
@@ -337,22 +411,46 @@ export default function AlertasPage() {
         </div>
       </div>
 
-      {whatsappConfig && (
-        <div className="flex flex-col gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-xs text-emerald-900 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-200 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <MessageCircle className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-            <span>
-              WhatsApp asociado para alertas (≤ 30 días):{" "}
-              <strong className="font-semibold">
-                {whatsappConfig.displayRecipient}
-              </strong>
-            </span>
-          </div>
-          <span className="font-medium text-emerald-800 dark:text-emerald-300">
-            {whatsappConfig.configured
-              ? `Envío automático API activo (${whatsappConfig.provider})`
-              : "Envío directo por WhatsApp Web activo (o configure API en .env para envío automático sin clic)"}
-          </span>
+      {(telegramConfig || whatsappConfig) && (
+        <div className="space-y-2">
+          {telegramConfig && (
+            <div className="flex flex-col gap-1.5 rounded-xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-xs text-sky-900 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-200 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <Send className="h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" />
+                <span>
+                  Telegram Bot para alertas automáticas (≤ 60 días):{" "}
+                  <strong className="font-semibold">
+                    {telegramConfig.configured
+                      ? `Chat ${telegramConfig.displayRecipient}`
+                      : "Pendiente de configurar"}
+                  </strong>
+                </span>
+              </div>
+              <span className="font-medium text-sky-800 dark:text-sky-300">
+                {telegramConfig.configured
+                  ? "Bot oficial de Telegram activo (envío automático sin costo)"
+                  : "Agrega TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID en .env / Vercel"}
+              </span>
+            </div>
+          )}
+          {whatsappConfig && (
+            <div className="flex flex-col gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-xs text-emerald-900 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-200 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <MessageCircle className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <span>
+                  WhatsApp asociado para alertas (≤ 60 días):{" "}
+                  <strong className="font-semibold">
+                    {whatsappConfig.displayRecipient}
+                  </strong>
+                </span>
+              </div>
+              <span className="font-medium text-emerald-800 dark:text-emerald-300">
+                {whatsappConfig.configured
+                  ? `Envío automático API activo (${whatsappConfig.provider})`
+                  : "Envío directo por WhatsApp Web activo (1 clic)"}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -472,8 +570,8 @@ export default function AlertasPage() {
                     </span>
                     {alert.emailSentAt && (
                       <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
-                        <MessageCircle className="h-3 w-3" />
-                        WhatsApp enviado
+                        <CheckCircle2 className="h-3 w-3" />
+                        Notificada
                       </span>
                     )}
                   </div>
@@ -585,7 +683,7 @@ export default function AlertasPage() {
         title="Enviar Alertas a WhatsApp"
         subtitle={
           waPreviewModal
-            ? `Destino: ${waPreviewModal.displayRecipient} · ${waPreviewModal.count} lote(s) con vencimiento ≤ 30 días`
+            ? `Destino: ${waPreviewModal.displayRecipient} · ${waPreviewModal.count} lote(s) con vencimiento ≤ 60 días`
             : undefined
         }
         icon={

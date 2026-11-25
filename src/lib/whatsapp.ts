@@ -143,7 +143,7 @@ export function buildWhatsAppAlertsMessage(
   ).length;
   const upcomingCount = sorted.filter(
     (a) =>
-      a.daysToExpiry !== null && a.daysToExpiry > 15 && a.daysToExpiry <= 30
+      a.daysToExpiry !== null && a.daysToExpiry > 15 && a.daysToExpiry <= 60
   ).length;
 
   const headerTitle = options?.isDigest
@@ -183,8 +183,8 @@ export function buildWhatsAppAlertsMessage(
 
   return [
     headerTitle,
-    `Lotes con novedad de vencimiento (<= 30 días): *${sorted.length}*`,
-    `Vencidos: *${expiredCount}* | Críticos (0-15d): *${criticalCount}* | Próximos (16-30d): *${upcomingCount}*`,
+    `Lotes con novedad de vencimiento (<= 60 días): *${sorted.length}*`,
+    `Vencidos: *${expiredCount}* | Críticos (0-15d): *${criticalCount}* | Próximos (16-60d): *${upcomingCount}*`,
     "",
     ...itemLines,
     extraLine,
@@ -350,7 +350,7 @@ export async function sendExpirationAlertsWhatsApp(
     return {
       sent: false,
       skipped: true,
-      reason: "No hay alertas pendientes con ≤ 30 días para enviar.",
+      reason: "No hay alertas pendientes con ≤ 60 días para enviar.",
       recipient: cfg.recipient,
       displayRecipient: cfg.displayRecipient,
       count: 0,

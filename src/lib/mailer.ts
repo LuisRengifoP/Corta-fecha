@@ -119,7 +119,7 @@ export async function sendExpirationAlertsEmail(
     return {
       sent: false,
       skipped: true,
-      reason: "No hay alertas pendientes con ≤ 30 días para enviar.",
+      reason: "No hay alertas pendientes con ≤ 60 días para enviar.",
       recipient: cfg.recipient,
       count: 0,
     };
@@ -148,13 +148,13 @@ export async function sendExpirationAlertsEmail(
   ).length;
   const upcomingCount = sorted.filter(
     (a) =>
-      a.daysToExpiry !== null && a.daysToExpiry > 15 && a.daysToExpiry <= 30
+      a.daysToExpiry !== null && a.daysToExpiry > 15 && a.daysToExpiry <= 60
   ).length;
 
   const subjectPrefix = options?.isDigest
     ? "[Resumen Corta Fecha]"
     : "[Alerta Corta Fecha]";
-  const subject = `${subjectPrefix} ${sorted.length} producto(s) próximo(s) a vencer o vencido(s) (≤ 30 días)`;
+  const subject = `${subjectPrefix} ${sorted.length} producto(s) próximo(s) a vencer o vencido(s) (≤ 60 días)`;
 
   const rowsHtml = sorted
     .map((item) => {
@@ -207,7 +207,7 @@ export async function sendExpirationAlertsEmail(
         <div style="background:#4f46e5;color:#ffffff;padding:20px 24px;">
           <h1 style="margin:0;font-size:18px;">Sistema Corta Fecha — Distrimarcas</h1>
           <p style="margin:6px 0 0;font-size:13px;opacity:0.9;">
-            Alerta de productos vencidos o próximos a vencer (≤ 30 días)
+            Alerta de productos vencidos o próximos a vencer (≤ 60 días)
           </p>
         </div>
         <div style="padding:20px 24px;">
@@ -217,7 +217,7 @@ export async function sendExpirationAlertsEmail(
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;">
             <span style="background:#fee2e2;color:#991b1b;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;">Vencidos: ${expiredCount}</span>
             <span style="background:#ffedd5;color:#9a3412;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;">Críticos (0-15d): ${criticalCount}</span>
-            <span style="background:#fef3c7;color:#92400e;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;">Próximos (16-30d): ${upcomingCount}</span>
+            <span style="background:#fef3c7;color:#92400e;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;">Próximos (16-60d): ${upcomingCount}</span>
           </div>
           <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;">
             <thead>
@@ -259,8 +259,8 @@ export async function sendExpirationAlertsEmail(
 
   const text = [
     `Sistema Corta Fecha — Distrimarcas`,
-    `Alertas de vencimiento (<= 30 días): ${sorted.length} lote(s)`,
-    `Vencidos: ${expiredCount} | Críticos (0-15d): ${criticalCount} | Próximos (16-30d): ${upcomingCount}`,
+    `Alertas de vencimiento (<= 60 días): ${sorted.length} lote(s)`,
+    `Vencidos: ${expiredCount} | Críticos (0-15d): ${criticalCount} | Próximos (16-60d): ${upcomingCount}`,
     "",
     ...textLines,
   ].join("\n");
