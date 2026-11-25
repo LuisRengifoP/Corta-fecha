@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   computeDaysToExpiry,
   computeLotStockMetrics,
   deriveLotStatus,
+  dispatchPendingExpiryNotifications,
   logActivity,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
@@ -44,11 +45,14 @@ export async function POST(req: NextRequest) {
     const reportedBy = String(body.reportedBy ?? "").trim();
     const damageType = String(body.damageType ?? "EMPAQUE_DANADO");
     const severity = String(body.severity ?? "MODERADA");
-    const boxesAffected = Math.max(0, Math.floor(Number(body.boxesAffected ?? 0)));
-    const looseUnitsAffected = Math.max(
-      0,
-      Math.floor(Number(body.looseUnitsAffected ?? 0))
-    );
+    const rawBoxes = Number(body.boxesAffected ?? 0);
+    const rawLoose = Number(body.looseUnitsAffected ?? 0);
+    const boxesAffected = Number.isFinite(rawBoxes)
+      ? Math.max(0, Math.floor(rawBoxes))
+      : 0;
+    const looseUnitsAffected = Number.isFinite(rawLoose)
+      ? Math.max(0, Math.floor(rawLoose))
+      : 0;
     const actionTaken = String(body.actionTaken ?? "CUARENTENA");
     const stockDeducted = Boolean(body.stockDeducted ?? true);
     const quarantineLot = Boolean(body.quarantineLot ?? false);
@@ -167,7 +171,15 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await syncAlertsAndStatuses(reportedBy);
+    await syncAlertsAndStatuses(reportedBy, {
+      sendWhatsApp: false,
+      sendTelegram: false,
+    });
+    after(() => {
+      void dispatchPendingExpiryNotifications(reportedBy).catch((err) =>
+        console.error("Error enviando notificaciones en segundo plano:", err)
+      );
+    });
 
     return NextResponse.json({ record }, { status: 201 });
   } catch (error) {

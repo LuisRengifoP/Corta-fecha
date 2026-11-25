@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ count });
     }
 
-    const alerts = await prisma.alert.findMany({
+    const rawAlerts = await prisma.alert.findMany({
       where,
       include: {
         lot: {
@@ -31,7 +31,17 @@ export async function GET(req: NextRequest) {
           },
         },
       },
-      orderBy: [{ acknowledged: "asc" }, { severity: "asc" }, { createdAt: "desc" }],
+      orderBy: [{ acknowledged: "asc" }, { createdAt: "desc" }],
+    });
+
+    const severityOrder: Record<string, number> = { ALTA: 0, MEDIA: 1, BAJA: 2 };
+    const alerts = rawAlerts.sort((a, b) => {
+      const sDiff =
+        (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9);
+      if (sDiff !== 0) return sDiff;
+      const dDiff = (a.daysToExpiry ?? 9999) - (b.daysToExpiry ?? 9999);
+      if (dDiff !== 0) return dDiff;
+      return b.createdAt.getTime() - a.createdAt.getTime();
     });
 
     const whatsappCfg = getWhatsAppConfigStatus();

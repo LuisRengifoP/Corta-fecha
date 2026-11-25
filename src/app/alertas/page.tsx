@@ -127,7 +127,7 @@ export default function AlertasPage() {
             });
             if (severityFilter) q.set("severity", severityFilter);
             const res = await fetch(`/api/alerts?${q.toString()}`);
-            if (!res.ok) return null;
+            if (!res.ok) throw new Error("No se pudieron cargar las alertas");
             return res.json();
           },
           { force, ttlMs: 15_000 }
@@ -137,6 +137,8 @@ export default function AlertasPage() {
           if (json.whatsappConfig) setWhatsappConfig(json.whatsappConfig);
           if (json.telegramConfig) setTelegramConfig(json.telegramConfig);
         }
+      } catch {
+        // Mantener estado previo si falla la red
       } finally {
         setLoading(false);
       }
@@ -164,28 +166,36 @@ export default function AlertasPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actor: actorName }),
       });
-      if (res.ok) {
-        const j = await res.json();
-        const waInfo = j.result.whatsappResult;
-        const tgInfo = j.result.telegramResult;
-        let extraMsg = "";
-        if (tgInfo?.sent) {
-          extraMsg += ` Telegram enviado (${tgInfo.count} alerta(s)).`;
-        }
-        if (waInfo?.sent) {
-          extraMsg += ` WhatsApp enviado a ${waInfo.displayRecipient} (${waInfo.count} alerta(s)).`;
-        } else if (waInfo?.waUrl && waInfo.count > 0) {
-          extraMsg += ` Lista para enviar por WhatsApp a ${waInfo.displayRecipient} (${waInfo.count} alerta(s)).`;
-        }
-        const text = `Escaneo finalizado: ${j.result.scannedLots} lotes evaluados, ${j.result.createdAlerts} alertas nuevas, ${j.result.resolvedAlerts} cerradas automáticamente.${extraMsg}`;
-        setBanner({ type: "info", text });
-        notify({
-          title: "Escaneo de alertas completado",
-          description: text,
-          variant: "success",
-        });
-        await reloadAfterMutation();
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errText = j.error || "No se pudo ejecutar el escaneo de alertas.";
+        setBanner({ type: "warn", text: errText });
+        notify({ title: "Error en escaneo", description: errText, variant: "error" });
+        return;
       }
+      const waInfo = j.result.whatsappResult;
+      const tgInfo = j.result.telegramResult;
+      let extraMsg = "";
+      if (tgInfo?.sent) {
+        extraMsg += ` Telegram enviado (${tgInfo.count} alerta(s)).`;
+      }
+      if (waInfo?.sent) {
+        extraMsg += ` WhatsApp enviado a ${waInfo.displayRecipient} (${waInfo.count} alerta(s)).`;
+      } else if (waInfo?.waUrl && waInfo.count > 0) {
+        extraMsg += ` Lista para enviar por WhatsApp a ${waInfo.displayRecipient} (${waInfo.count} alerta(s)).`;
+      }
+      const text = `Escaneo finalizado: ${j.result.scannedLots} lotes evaluados, ${j.result.createdAlerts} alertas nuevas, ${j.result.resolvedAlerts} cerradas automáticamente.${extraMsg}`;
+      setBanner({ type: "info", text });
+      notify({
+        title: "Escaneo de alertas completado",
+        description: text,
+        variant: "success",
+      });
+      await reloadAfterMutation();
+    } catch {
+      const errText = "Error de conexión al ejecutar el escaneo automático.";
+      setBanner({ type: "warn", text: errText });
+      notify({ title: "Error de conexión", description: errText, variant: "error" });
     } finally {
       setSyncing(false);
     }
@@ -200,7 +210,7 @@ export default function AlertasPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actor: actorName, onlyUnsent: false }),
       });
-      const j = await res.json();
+      const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         const errText =
           j.error || "No se pudo enviar la notificación por WhatsApp.";
@@ -238,6 +248,10 @@ export default function AlertasPage() {
             "No hay alertas activas con ≤ 60 días para enviar.",
         });
       }
+    } catch {
+      const errText = "Error de conexión al preparar notificación de WhatsApp.";
+      setBanner({ type: "warn", text: errText });
+      notify({ title: "Error de conexión", description: errText, variant: "error" });
     } finally {
       setSendingWhatsApp(false);
     }
@@ -252,7 +266,7 @@ export default function AlertasPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actor: actorName, onlyUnsent: false }),
       });
-      const j = await res.json();
+      const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         const errText =
           j.error || "No se pudo enviar la notificación por Telegram.";
@@ -285,45 +299,70 @@ export default function AlertasPage() {
           variant: "info",
         });
       }
+    } catch {
+      const errText = "Error de conexión al enviar notificación por Telegram.";
+      setBanner({ type: "warn", text: errText });
+      notify({ title: "Error de conexión", description: errText, variant: "error" });
     } finally {
       setSendingTelegram(false);
     }
   };
 
   const handleMarkManualWhatsAppSent = async () => {
-    await fetch("/api/alerts/whatsapp", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actor: actorName, markManualSent: true }),
-    });
-    setWaPreviewModal(null);
-    const msg = `Alertas marcadas como notificadas por WhatsApp hacia ${
-      whatsappConfig?.displayRecipient || "+57 312 638 7834"
-    }.`;
-    setBanner({ type: "info", text: msg });
-    notify({
-      title: "Notificación registrada",
-      description: msg,
-      variant: "success",
-    });
-    await reloadAfterMutation();
-  };
-
-  const handleAcknowledge = async (id: string, acknowledged: boolean) => {
-    const res = await fetch(`/api/alerts/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        acknowledged,
-        acknowledgedBy: actorName || "Supervisor",
-      }),
-    });
-    if (res.ok) {
+    try {
+      await fetch("/api/alerts/whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actor: actorName, markManualSent: true }),
+      });
+      setWaPreviewModal(null);
+      const msg = `Alertas marcadas como notificadas por WhatsApp hacia ${
+        whatsappConfig?.displayRecipient || "+57 312 638 7834"
+      }.`;
+      setBanner({ type: "info", text: msg });
       notify({
-        title: acknowledged ? "Alerta marcada como atendida" : "Alerta reabierta",
+        title: "Notificación registrada",
+        description: msg,
         variant: "success",
       });
       await reloadAfterMutation();
+    } catch {
+      setWaPreviewModal(null);
+    }
+  };
+
+  const handleAcknowledge = async (id: string, acknowledged: boolean) => {
+    try {
+      const res = await fetch(`/api/alerts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          acknowledged,
+          acknowledgedBy: actorName || "Supervisor",
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notify({
+          title: acknowledged
+            ? "Alerta marcada como atendida"
+            : "Alerta reabierta",
+          variant: "success",
+        });
+        await reloadAfterMutation();
+      } else {
+        notify({
+          title: "No se pudo actualizar la alerta",
+          description: json.error || "Intenta nuevamente.",
+          variant: "error",
+        });
+      }
+    } catch {
+      notify({
+        title: "Error de conexión",
+        description: "No se pudo actualizar el estado de la alerta.",
+        variant: "error",
+      });
     }
   };
 
@@ -346,12 +385,17 @@ export default function AlertasPage() {
         await reloadAfterMutation();
       } else {
         const json = await res.json().catch(() => ({}));
-        setBanner({
-          type: "warn",
-          text: json.error || "No se pudo eliminar la alerta.",
-        });
+        const errText = json.error || "No se pudo eliminar la alerta.";
+        setBanner({ type: "warn", text: errText });
+        notify({ title: "Error al eliminar", description: errText, variant: "error" });
         setDeletingAlert(null);
       }
+    } catch {
+      notify({
+        title: "Error de conexión",
+        description: "No se pudo eliminar la alerta.",
+        variant: "error",
+      });
     } finally {
       setDeletingBusy(false);
     }
@@ -559,7 +603,7 @@ export default function AlertasPage() {
                 key={alert.id}
                 className={`ui-card flex flex-col justify-between gap-4 border-l-4 p-5 transition-shadow hover:shadow-md lg:flex-row lg:items-center ${leftBorder}`}
               >
-                <div className="space-y-1.5">
+                <div className="min-w-0 flex-1 space-y-1.5">
                   <div className="flex flex-wrap items-center gap-2">
                     <SeverityBadge severity={alert.severity} />
                     <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
@@ -575,10 +619,10 @@ export default function AlertasPage() {
                       </span>
                     )}
                   </div>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  <h3 className="break-words text-base font-bold text-slate-900 dark:text-slate-100">
                     {alert.title}
                   </h3>
-                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                  <p className="break-words text-sm text-slate-600 dark:text-slate-300">
                     {alert.message}
                   </p>
                   {alert.lot && (
@@ -699,20 +743,28 @@ export default function AlertasPage() {
               value={waPreviewModal.messageText}
               className="ui-textarea bg-slate-50 font-mono text-xs text-slate-800 dark:bg-slate-950 dark:text-slate-200"
             />
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
               <button
                 type="button"
                 onClick={async () => {
-                  await navigator.clipboard.writeText(
-                    waPreviewModal.messageText
-                  );
-                  setCopiedMsg(true);
-                  notify({
-                    title: "Mensaje copiado al portapapeles",
-                    variant: "success",
-                  });
+                  try {
+                    await navigator.clipboard.writeText(
+                      waPreviewModal.messageText
+                    );
+                    setCopiedMsg(true);
+                    notify({
+                      title: "Mensaje copiado al portapapeles",
+                      variant: "success",
+                    });
+                  } catch {
+                    notify({
+                      title: "Copia manual",
+                      description: "Selecciona y copia el texto del cuadro superior.",
+                      variant: "info",
+                    });
+                  }
                 }}
-                className="ui-btn ui-btn-secondary text-xs"
+                className="ui-btn ui-btn-secondary w-full text-xs sm:w-auto"
               >
                 <Copy className="h-3.5 w-3.5" />
                 {copiedMsg ? "Mensaje copiado ✓" : "Copiar mensaje"}
@@ -723,7 +775,7 @@ export default function AlertasPage() {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={handleMarkManualWhatsAppSent}
-                className="ui-btn ui-btn-emerald text-xs"
+                className="ui-btn ui-btn-emerald w-full text-xs sm:w-auto"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
                 Abrir en WhatsApp y Marcar Enviado
@@ -743,36 +795,36 @@ export default function AlertasPage() {
         }
         maxWidthClass="max-w-md"
         closeDisabled={deletingBusy}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setDeletingAlert(null)}
+              disabled={deletingBusy}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDeleteAlert}
+              disabled={deletingBusy}
+              className="ui-btn ui-btn-danger"
+            >
+              {deletingBusy ? "Eliminando..." : "Eliminar alerta"}
+            </button>
+          </div>
+        }
       >
         {deletingAlert && (
-          <>
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              ¿Deseas eliminar la alerta{" "}
-              <strong className="text-slate-900 dark:text-slate-100">
-                {deletingAlert.title}
-              </strong>
-              ? Si corresponde a un lote activo, volverá a generarse en el
-              próximo escaneo automático.
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDeletingAlert(null)}
-                disabled={deletingBusy}
-                className="ui-btn ui-btn-secondary"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDeleteAlert}
-                disabled={deletingBusy}
-                className="ui-btn ui-btn-danger"
-              >
-                {deletingBusy ? "Eliminando..." : "Eliminar alerta"}
-              </button>
-            </div>
-          </>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            ¿Deseas eliminar la alerta{" "}
+            <strong className="text-slate-900 dark:text-slate-100">
+              {deletingAlert.title}
+            </strong>
+            ? Si corresponde a un lote activo, volverá a generarse en el
+            próximo escaneo automático.
+          </p>
         )}
       </Modal>
     </div>

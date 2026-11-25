@@ -125,7 +125,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         "session:me",
         async () => {
           const res = await fetch("/api/auth/me");
-          if (!res.ok) return {};
+          if (!res.ok) throw new Error("No se pudo cargar la sesión");
           return res.json();
         },
         { force, ttlMs: 300_000 }
@@ -218,17 +218,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    invalidateCache();
-    setUser(null);
-    setActiveAlerts(0);
-    router.push("/login");
-    router.refresh();
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Continuar con redirección al login
+    } finally {
+      invalidateCache();
+      setUser(null);
+      setActiveAlerts(0);
+      router.push("/login");
+      router.refresh();
+    }
   };
 
   const handleUpdateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     setAccountMsg(null);
+    if (!accountForm.fullName.trim() || !accountForm.currentPassword) {
+      setAccountMsg({
+        type: "err",
+        text: "El nombre y la contraseña actual son obligatorios.",
+      });
+      return;
+    }
     setAccountBusy(true);
     try {
       const res = await fetch("/api/auth/change-password", {
@@ -236,12 +248,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(accountForm),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setAccountMsg({
-          type: "err",
-          text: json.error || "No se pudo actualizar la cuenta",
-        });
+        const msg = json.error || "No se pudo actualizar la cuenta";
+        setAccountMsg({ type: "err", text: msg });
+        notify({ title: "Error al actualizar cuenta", description: msg, variant: "error" });
         return;
       }
       setUser(json.user);
@@ -260,6 +271,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         description: `Los cambios de acceso para ${json.user.fullName} se guardaron.`,
         variant: "success",
       });
+    } catch {
+      const msg = "Error de conexión al guardar cambios de la cuenta.";
+      setAccountMsg({ type: "err", text: msg });
+      notify({ title: "Error de red", description: msg, variant: "error" });
     } finally {
       setAccountBusy(false);
     }
@@ -342,6 +357,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onClick={() => {
             setMobileOpen(false);
             setAccountMsg(null);
+            if (user?.fullName) {
+              setAccountForm((prev) => ({
+                ...prev,
+                fullName: prev.fullName || user.fullName,
+              }));
+            }
             setShowAccountModal(true);
           }}
           className="ui-btn ui-btn-secondary flex-1 py-2 text-xs sm:py-1.5"
@@ -661,6 +682,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         }
         maxWidthClass="max-w-md"
         closeDisabled={accountBusy}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setShowAccountModal(false)}
+              disabled={accountBusy}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cerrar
+            </button>
+            <button
+              type="submit"
+              form="account-form"
+              disabled={accountBusy}
+              className="ui-btn ui-btn-primary"
+            >
+              {accountBusy ? "Guardando..." : "Guardar cambios"}
+            </button>
+          </div>
+        }
       >
         {accountMsg && (
           <div
@@ -673,7 +714,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {accountMsg.text}
           </div>
         )}
-        <form onSubmit={handleUpdateAccount} className="space-y-4">
+        <form id="account-form" noValidate onSubmit={handleUpdateAccount} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
               Nombre de la Encargada *
@@ -720,23 +761,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               placeholder="Dejar vacío si solo cambias el nombre"
               className="ui-input mt-1.5"
             />
-          </div>
-          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={() => setShowAccountModal(false)}
-              disabled={accountBusy}
-              className="ui-btn ui-btn-secondary"
-            >
-              Cerrar
-            </button>
-            <button
-              type="submit"
-              disabled={accountBusy}
-              className="ui-btn ui-btn-primary"
-            >
-              {accountBusy ? "Guardando..." : "Guardar cambios"}
-            </button>
           </div>
         </form>
       </Modal>

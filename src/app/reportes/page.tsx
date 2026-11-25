@@ -14,6 +14,7 @@ import {
   Warehouse,
   X,
 } from "lucide-react";
+import { useAppSession } from "@/components/AppSessionContext";
 import { useToast } from "@/components/ToastProvider";
 import { fetchWithCache, getCached } from "@/lib/client-cache";
 
@@ -21,6 +22,7 @@ type SupplierOption = { id: string; name: string };
 
 export default function ReportesPage() {
   const { notify } = useToast();
+  const { warehouseName } = useAppSession();
   const [days, setDays] = useState("30");
   const [provider, setProvider] = useState("");
   const [suppliers, setSuppliers] = useState<SupplierOption[]>(
@@ -32,7 +34,7 @@ export default function ReportesPage() {
       "ref:suppliers",
       async () => {
         const res = await fetch("/api/suppliers");
-        if (!res.ok) return [];
+        if (!res.ok) throw new Error("No se pudieron cargar proveedores");
         const data = await res.json();
         return data?.suppliers ?? [];
       },
@@ -137,8 +139,8 @@ export default function ReportesPage() {
             Bodega Activa
           </p>
           <p className="mt-1 flex items-center gap-1.5 text-sm font-bold text-slate-900 dark:text-slate-100">
-            <Warehouse className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-            Bodega Distrimarcas
+            <Warehouse className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+            <span className="truncate">{warehouseName}</span>
           </p>
         </div>
 

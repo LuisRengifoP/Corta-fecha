@@ -5,7 +5,7 @@ export async function GET(req: NextRequest) {
   try {
     const params = req.nextUrl.searchParams;
     const entityType = params.get("entityType") ?? "";
-    const search = params.get("search")?.trim().toLowerCase() ?? "";
+    const search = params.get("search")?.trim() ?? "";
     const pageParam = params.get("page");
     const pageSizeParam = params.get("pageSize");
 
@@ -14,10 +14,10 @@ export async function GET(req: NextRequest) {
       ...(search
         ? {
             OR: [
-              { actor: { contains: search } },
-              { summary: { contains: search } },
-              { action: { contains: search } },
-              { entityType: { contains: search } },
+              { actor: { contains: search, mode: "insensitive" as const } },
+              { summary: { contains: search, mode: "insensitive" as const } },
+              { action: { contains: search, mode: "insensitive" as const } },
+              { entityType: { contains: search, mode: "insensitive" as const } },
             ],
           }
         : {}),

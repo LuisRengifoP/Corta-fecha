@@ -39,9 +39,13 @@ export function calculateTotalUnits(
   looseUnits: number,
   unitsPerBox: number
 ): number {
-  const safeBoxes = Math.max(0, Math.floor(boxes));
-  const safeLoose = Math.max(0, Math.floor(looseUnits));
-  const safePerBox = Math.max(1, Math.floor(unitsPerBox));
+  const safeBoxes = Number.isFinite(boxes) ? Math.max(0, Math.floor(boxes)) : 0;
+  const safeLoose = Number.isFinite(looseUnits)
+    ? Math.max(0, Math.floor(looseUnits))
+    : 0;
+  const safePerBox = Number.isFinite(unitsPerBox)
+    ? Math.max(1, Math.floor(unitsPerBox))
+    : 1;
   return safeBoxes * safePerBox + safeLoose;
 }
 
@@ -302,6 +306,45 @@ export async function dispatchExpiryAlertTelegram(options?: {
   }
 }
 
+export async function dispatchPendingExpiryNotifications(
+  actor = "Motor Automático"
+) {
+  const [whatsappResult, telegramResult] = await Promise.all([
+    dispatchExpiryAlertWhatsApp({
+      actor,
+      onlyUnsent: true,
+      isDigest: false,
+      markAsSent: false,
+    }),
+    dispatchExpiryAlertTelegram({
+      actor,
+      onlyUnsent: true,
+      isDigest: false,
+      markAsSent: false,
+    }),
+  ]);
+
+  if (whatsappResult?.sent || telegramResult?.sent) {
+    await prisma.alert.updateMany({
+      where: {
+        acknowledged: false,
+        emailSentAt: null,
+        type: {
+          in: [
+            "PRODUCTO_VENCIDO",
+            "VENCIMIENTO_CRITICO",
+            "VENCIMIENTO_PREVENTIVO",
+          ],
+        },
+        daysToExpiry: { lte: 60 },
+      },
+      data: { emailSentAt: new Date() },
+    });
+  }
+
+  return { whatsappResult, telegramResult };
+}
+
 /**
  * Recalcula estados de todos los lotes y sincroniza alertas preventivas/críticas
  * sin duplicar alertas activas para un mismo lote y tipo.
@@ -311,12 +354,34 @@ export async function syncAlertsAndStatuses(
   options?: { sendWhatsApp?: boolean; sendTelegram?: boolean }
 ) {
   const now = new Date();
-  const lots = await prisma.inventoryLot.findMany({
-    include: {
-      product: true,
-      warehouse: true,
-    },
-  });
+  const EXPIRY_ALERT_TYPES = [
+    "PRODUCTO_VENCIDO",
+    "VENCIMIENTO_CRITICO",
+    "VENCIMIENTO_PREVENTIVO",
+  ];
+
+  const [lots, allActiveExpiryAlerts] = await Promise.all([
+    prisma.inventoryLot.findMany({
+      include: {
+        product: true,
+        warehouse: true,
+      },
+    }),
+    prisma.alert.findMany({
+      where: {
+        acknowledged: false,
+        type: { in: EXPIRY_ALERT_TYPES },
+      },
+    }),
+  ]);
+
+  const alertsByLot = new Map<string, typeof allActiveExpiryAlerts>();
+  for (const alert of allActiveExpiryAlerts) {
+    if (!alert.lotId) continue;
+    const arr = alertsByLot.get(alert.lotId) ?? [];
+    arr.push(alert);
+    alertsByLot.set(alert.lotId, arr);
+  }
 
   let updatedStatuses = 0;
   let createdAlerts = 0;
@@ -374,7 +439,7 @@ export async function syncAlertsAndStatuses(
       message: string;
     } | null = null;
 
-    if ((totalUnits > 0 || hasStock) && lot.status !== "CUARENTENA") {
+    if ((totalUnits > 0 || hasStock) && nextStatus !== "CUARENTENA") {
       if (daysToExpiry < 0) {
         targetAlert = {
           type: "PRODUCTO_VENCIDO",
@@ -403,19 +468,7 @@ export async function syncAlertsAndStatuses(
       }
     }
 
-    const activeLotAlerts = await prisma.alert.findMany({
-      where: {
-        lotId: lot.id,
-        acknowledged: false,
-        type: {
-          in: [
-            "PRODUCTO_VENCIDO",
-            "VENCIMIENTO_CRITICO",
-            "VENCIMIENTO_PREVENTIVO",
-          ],
-        },
-      },
-    });
+    const activeLotAlerts = alertsByLot.get(lot.id) ?? [];
 
     if (!targetAlert) {
       if (activeLotAlerts.length > 0) {
@@ -446,15 +499,22 @@ export async function syncAlertsAndStatuses(
       }
 
       if (sameType) {
-        await prisma.alert.update({
-          where: { id: sameType.id },
-          data: {
-            daysToExpiry,
-            severity: targetAlert.severity,
-            title: targetAlert.title,
-            message: targetAlert.message,
-          },
-        });
+        if (
+          sameType.daysToExpiry !== daysToExpiry ||
+          sameType.severity !== targetAlert.severity ||
+          sameType.title !== targetAlert.title ||
+          sameType.message !== targetAlert.message
+        ) {
+          await prisma.alert.update({
+            where: { id: sameType.id },
+            data: {
+              daysToExpiry,
+              severity: targetAlert.severity,
+              title: targetAlert.title,
+              message: targetAlert.message,
+            },
+          });
+        }
       } else {
         await prisma.alert.create({
           data: {
@@ -496,13 +556,7 @@ export async function syncAlertsAndStatuses(
       where: {
         acknowledged: false,
         emailSentAt: null,
-        type: {
-          in: [
-            "PRODUCTO_VENCIDO",
-            "VENCIMIENTO_CRITICO",
-            "VENCIMIENTO_PREVENTIVO",
-          ],
-        },
+        type: { in: EXPIRY_ALERT_TYPES },
         daysToExpiry: { lte: 60 },
       },
       data: { emailSentAt: new Date() },

@@ -242,6 +242,7 @@ async function sendViaMetaCloudApi(
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(8000),
     body: JSON.stringify(payload),
   });
 
@@ -265,7 +266,10 @@ async function sendViaCallMeBot(
     apiKey
   )}`;
 
-  const res = await fetch(url, { method: "GET" });
+  const res = await fetch(url, {
+    method: "GET",
+    signal: AbortSignal.timeout(8000),
+  });
   const text = await res.text().catch(() => "");
   if (!res.ok || /error/i.test(text)) {
     throw new Error(text || `CallMeBot respondió ${res.status}`);
@@ -297,6 +301,7 @@ async function sendViaTwilio(
         Authorization: `Basic ${auth}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
+      signal: AbortSignal.timeout(8000),
       body: body.toString(),
     }
   );
@@ -324,6 +329,7 @@ async function sendViaWebhook(
   const res = await fetch(webhookUrl, {
     method: "POST",
     headers,
+    signal: AbortSignal.timeout(8000),
     body: JSON.stringify({
       to: recipient,
       phone: `+${recipient}`,

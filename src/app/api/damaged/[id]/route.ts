@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   computeDaysToExpiry,
   computeLotStockMetrics,
   deriveLotStatus,
+  dispatchPendingExpiryNotifications,
   logActivity,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
@@ -148,7 +149,15 @@ export async function DELETE(
     });
 
     if (shouldRestoreStock) {
-      await syncAlertsAndStatuses(actor);
+      await syncAlertsAndStatuses(actor, {
+        sendWhatsApp: false,
+        sendTelegram: false,
+      });
+      after(() => {
+        void dispatchPendingExpiryNotifications(actor).catch((err) =>
+          console.error("Error enviando notificaciones en segundo plano:", err)
+        );
+      });
     }
 
     return NextResponse.json({

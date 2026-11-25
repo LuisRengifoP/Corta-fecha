@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   computeDaysToExpiry,
   computeLotStockMetrics,
   deriveLotStatus,
+  dispatchPendingExpiryNotifications,
   logActivity,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
@@ -61,6 +62,8 @@ export async function GET(req: NextRequest) {
             lot.expiryDisplay ?? "",
             lot.product.name,
             lot.product.sku,
+            lot.product.barcode ?? "",
+            lot.product.brand ?? "",
             lot.product.category,
             lot.product.supplier?.name ?? "",
             lot.warehouse.name,
@@ -70,6 +73,7 @@ export async function GET(req: NextRequest) {
           if (!haystack.includes(search)) return false;
         }
         if (expiryWindow === "expired") return lot.daysToExpiry < 0 && active;
+        if (expiryWindow === "critical") return lot.daysToExpiry <= 15 && active;
         if (expiryWindow === "15")
           return lot.daysToExpiry >= 0 && lot.daysToExpiry <= 15 && active;
         if (expiryWindow === "30")
@@ -92,9 +96,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const productId = String(body.productId ?? "");
-    const warehouseId = String(body.warehouseId ?? "");
+    const productId = String(body.productId ?? "").trim();
+    let warehouseId = String(body.warehouseId ?? "").trim();
     const lotNumber = String(body.lotNumber ?? "").trim().toUpperCase();
+    const actor = String(body.actor ?? "").trim() || "Encargada de Bodega";
     const counts = sanitizeCounts({
       boxes: body.boxes,
       packs: body.packs,
@@ -108,6 +113,13 @@ export async function POST(req: NextRequest) {
       : null;
     const notes = body.notes ? String(body.notes).trim() : null;
 
+    if (!warehouseId) {
+      const defaultWh = await prisma.warehouse.findFirst({
+        orderBy: { createdAt: "asc" },
+      });
+      warehouseId = defaultWh?.id ?? "";
+    }
+
     if (!productId || !warehouseId || !lotNumber) {
       return NextResponse.json(
         {
@@ -118,18 +130,50 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const parsedExpiry = parseFlexibleExpiryInput({
-      expiryDate: body.expiryDate,
-      expiryMonth: body.expiryMonth,
-      expiryPrecision: body.expiryPrecision,
-      expiryDisplay: body.expiryDisplay,
-    });
+    let parsedExpiry: ReturnType<typeof parseFlexibleExpiryInput>;
+    try {
+      parsedExpiry = parseFlexibleExpiryInput({
+        expiryDate: body.expiryDate,
+        expiryMonth: body.expiryMonth,
+        expiryPrecision: body.expiryPrecision,
+        expiryDisplay: body.expiryDisplay,
+      });
+    } catch (expiryErr) {
+      return NextResponse.json(
+        {
+          error:
+            expiryErr instanceof Error
+              ? expiryErr.message
+              : "Fecha de vencimiento inválida",
+        },
+        { status: 400 }
+      );
+    }
 
     const product = await prisma.product.findUnique({ where: { id: productId } });
     if (!product) {
       return NextResponse.json(
-        { error: "Producto no encontrado" },
+        { error: "Producto no encontrado en el catálogo" },
         { status: 404 }
+      );
+    }
+
+    const existingDuplicate = await prisma.inventoryLot.findUnique({
+      where: {
+        productId_warehouseId_lotNumber: {
+          productId,
+          warehouseId,
+          lotNumber,
+        },
+      },
+      select: { id: true },
+    });
+    if (existingDuplicate) {
+      return NextResponse.json(
+        {
+          error: `Ya existe el lote ${lotNumber} para "${product.name}" en esta bodega. Edita el lote existente si deseas actualizar su cantidad.`,
+        },
+        { status: 409 }
       );
     }
 
@@ -166,18 +210,26 @@ export async function POST(req: NextRequest) {
         status,
         notes,
       },
-      include: { product: true, warehouse: true },
+      include: { product: { include: { supplier: true } }, warehouse: true },
     });
 
     await logActivity({
       entityType: "LOTE",
       entityId: lot.id,
       action: "CREAR",
-      actor: body.actor || "Encargada de Bodega",
+      actor,
       summary: `Lote ${lot.lotNumber} registrado (${lot.product.sku} — ${lot.product.name}): ${lot.quantityText} · Vence ${lot.expiryDisplay}`,
     });
 
-    await syncAlertsAndStatuses(body.actor || "Encargada de Bodega");
+    await syncAlertsAndStatuses(actor, {
+      sendWhatsApp: false,
+      sendTelegram: false,
+    });
+    after(() => {
+      void dispatchPendingExpiryNotifications(actor).catch((err) =>
+        console.error("Error enviando notificaciones en segundo plano:", err)
+      );
+    });
 
     return NextResponse.json(
       { lot: { ...lot, daysToExpiry } },
@@ -188,7 +240,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "No se pudo registrar el lote (verifique la fecha y que el lote no esté duplicado para ese producto y bodega)",
+          "No se pudo registrar el lote (verifique los datos ingresados y que el lote no esté duplicado)",
       },
       { status: 400 }
     );

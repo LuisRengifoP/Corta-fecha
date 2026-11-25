@@ -140,7 +140,10 @@ export function Pagination({
 
         {pages.map((entry, idx) =>
           entry === "ellipsis" ? (
-            <span key={`ellipsis-${idx}`} className="px-1.5 text-slate-400">
+            <span
+              key={`ellipsis-${idx}`}
+              className="hidden px-1.5 text-slate-400 sm:inline"
+            >
               ...
             </span>
           ) : (
@@ -149,7 +152,7 @@ export function Pagination({
               type="button"
               onClick={() => onPageChange(entry)}
               aria-current={entry === safePage ? "page" : undefined}
-              className={`tabular-nums inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 ${
+              className={`tabular-nums hidden h-8 min-w-8 items-center justify-center rounded-lg px-2 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 sm:inline-flex ${
                 entry === safePage
                   ? "bg-indigo-600 text-white shadow-xs"
                   : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
@@ -159,6 +162,10 @@ export function Pagination({
             </button>
           )
         )}
+
+        <span className="tabular-nums inline-flex h-8 items-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 sm:hidden">
+          {safePage} / {totalPages}
+        </span>
 
         <button
           type="button"

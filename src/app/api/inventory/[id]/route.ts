@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   computeDaysToExpiry,
   computeLotStockMetrics,
   deriveLotStatus,
+  dispatchPendingExpiryNotifications,
   logActivity,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
@@ -43,19 +44,36 @@ export async function PATCH(
       body.expiryMonth !== undefined ||
       body.expiryPrecision !== undefined;
 
-    const parsedExpiry = hasExpiryUpdate
-      ? parseFlexibleExpiryInput({
-          expiryDate:
-            body.expiryDate ?? existing.expiryDate.toISOString().slice(0, 10),
-          expiryMonth: body.expiryMonth,
-          expiryPrecision: body.expiryPrecision ?? existing.expiryPrecision,
-          expiryDisplay: body.expiryDisplay,
-        })
-      : {
-          expiryDate: existing.expiryDate,
-          expiryPrecision: existing.expiryPrecision,
-          expiryDisplay: existing.expiryDisplay,
-        };
+    let parsedExpiry: {
+      expiryDate: Date;
+      expiryPrecision: string;
+      expiryDisplay: string | null;
+    };
+    try {
+      parsedExpiry = hasExpiryUpdate
+        ? parseFlexibleExpiryInput({
+            expiryDate:
+              body.expiryDate ?? existing.expiryDate.toISOString().slice(0, 10),
+            expiryMonth: body.expiryMonth,
+            expiryPrecision: body.expiryPrecision ?? existing.expiryPrecision,
+            expiryDisplay: body.expiryDisplay,
+          })
+        : {
+            expiryDate: existing.expiryDate,
+            expiryPrecision: existing.expiryPrecision,
+            expiryDisplay: existing.expiryDisplay,
+          };
+    } catch (expiryErr) {
+      return NextResponse.json(
+        {
+          error:
+            expiryErr instanceof Error
+              ? expiryErr.message
+              : "Fecha de vencimiento inválida",
+        },
+        { status: 400 }
+      );
+    }
 
     const locationCode =
       body.locationCode !== undefined
@@ -108,15 +126,25 @@ export async function PATCH(
       include: { product: true, warehouse: true },
     });
 
+    const actor = String(body.actor ?? "").trim() || "Encargada de Bodega";
+
     await logActivity({
       entityType: "LOTE",
       entityId: updated.id,
       action: "ACTUALIZAR",
-      actor: body.actor || "Encargada de Bodega",
+      actor,
       summary: `Lote ${updated.lotNumber} (${updated.product.name}) actualizado: ${updated.quantityText}, estado ${updated.status}`,
     });
 
-    await syncAlertsAndStatuses(body.actor || "Encargada de Bodega");
+    await syncAlertsAndStatuses(actor, {
+      sendWhatsApp: false,
+      sendTelegram: false,
+    });
+    after(() => {
+      void dispatchPendingExpiryNotifications(actor).catch((err) =>
+        console.error("Error enviando notificaciones en segundo plano:", err)
+      );
+    });
 
     return NextResponse.json({
       lot: { ...updated, daysToExpiry },

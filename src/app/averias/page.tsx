@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   FileSpreadsheet,
@@ -78,19 +78,25 @@ export default function AveriasPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const handledLotParamRef = useRef(false);
 
   const [form, setForm] = useState({
     lotId: "",
     reportedBy: user?.fullName ?? "",
     damageType: "EMPAQUE_DANADO",
     severity: "MODERADA",
-    boxesAffected: 0,
-    looseUnitsAffected: 0,
+    boxesAffected: "",
+    looseUnitsAffected: "",
     actionTaken: "CUARENTENA",
     stockDeducted: true,
     quarantineLot: false,
     notes: "",
   });
+
+  const toNonNegInt = (val: string | number): number => {
+    const n = Number(val);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  };
 
   const [updateForm, setUpdateForm] = useState({
     resolutionStatus: "EN_GESTION",
@@ -126,7 +132,7 @@ export default function AveriasPage() {
             cacheKey,
             async () => {
               const res = await fetch(`/api/damaged?${q.toString()}`);
-              if (!res.ok) return [];
+              if (!res.ok) throw new Error("No se pudieron cargar averías");
               return (await res.json()).records ?? [];
             },
             { force, ttlMs: 15_000 }
@@ -135,7 +141,7 @@ export default function AveriasPage() {
             "inventory:all",
             async () => {
               const res = await fetch("/api/inventory");
-              if (!res.ok) return [];
+              if (!res.ok) throw new Error("No se pudieron cargar lotes");
               return (await res.json()).lots ?? [];
             },
             { force, ttlMs: 20_000 }
@@ -143,6 +149,8 @@ export default function AveriasPage() {
         ]);
         setRecords(recList);
         setLots(lotsList);
+      } catch {
+        // Mantener estado previo en caso de error transitorio
       } finally {
         setLoading(false);
       }
@@ -163,8 +171,10 @@ export default function AveriasPage() {
   }, [loadData, refreshAlertsCount]);
 
   useEffect(() => {
+    if (handledLotParamRef.current || lots.length === 0) return;
     const lotIdParam = new URLSearchParams(window.location.search).get("lotId");
-    if (lotIdParam && lots.length > 0) {
+    if (lotIdParam) {
+      handledLotParamRef.current = true;
       const exists = lots.find((l) => l.id === lotIdParam);
       if (exists) {
         setForm((prev) => ({ ...prev, lotId: exists.id }));
@@ -176,16 +186,36 @@ export default function AveriasPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    const boxes = toNonNegInt(form.boxesAffected);
+    const loose = toNonNegInt(form.looseUnitsAffected);
+    if (!form.lotId) {
+      setErrorMsg("Selecciona el lote afectado.");
+      return;
+    }
+    if (!form.reportedBy.trim()) {
+      setErrorMsg("Indica el nombre de quien reporta la avería.");
+      return;
+    }
+    if (boxes + loose <= 0) {
+      setErrorMsg("Ingresa al menos 1 caja o 1 unidad afectada.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch("/api/damaged", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          boxesAffected: boxes,
+          looseUnitsAffected: loose,
+        }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setErrorMsg(json.error || "No se pudo registrar la avería");
+        const msg = json.error || "No se pudo registrar la avería";
+        setErrorMsg(msg);
+        notify({ title: "No se pudo guardar", description: msg, variant: "error" });
         return;
       }
       setShowModal(false);
@@ -195,8 +225,8 @@ export default function AveriasPage() {
         reportedBy: operatorName,
         damageType: "EMPAQUE_DANADO",
         severity: "MODERADA",
-        boxesAffected: 0,
-        looseUnitsAffected: 0,
+        boxesAffected: "",
+        looseUnitsAffected: "",
         actionTaken: "CUARENTENA",
         stockDeducted: true,
         quarantineLot: false,
@@ -210,6 +240,10 @@ export default function AveriasPage() {
         variant: "success",
       });
       await reloadAfterMutation();
+    } catch {
+      const msg = "Error de conexión al registrar la avería.";
+      setErrorMsg(msg);
+      notify({ title: "Error de conexión", description: msg, variant: "error" });
     } finally {
       setSubmitting(false);
     }
@@ -218,6 +252,7 @@ export default function AveriasPage() {
   const handleUpdateResolution = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRecord) return;
+    setErrorMsg(null);
     setUpdating(true);
     try {
       const res = await fetch(`/api/damaged/${editingRecord.id}`, {
@@ -225,6 +260,7 @@ export default function AveriasPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updateForm),
       });
+      const json = await res.json().catch(() => ({}));
       if (res.ok) {
         setEditingRecord(null);
         notify({
@@ -233,11 +269,14 @@ export default function AveriasPage() {
         });
         await reloadAfterMutation();
       } else {
-        notify({
-          title: "No se pudo actualizar la avería",
-          variant: "error",
-        });
+        const msg = json.error || "No se pudo actualizar la avería";
+        setErrorMsg(msg);
+        notify({ title: "Error al actualizar", description: msg, variant: "error" });
       }
+    } catch {
+      const msg = "Error de conexión al actualizar la avería.";
+      setErrorMsg(msg);
+      notify({ title: "Error de conexión", description: msg, variant: "error" });
     } finally {
       setUpdating(false);
     }
@@ -261,7 +300,9 @@ export default function AveriasPage() {
       );
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        setErrorMsg(json.error || "No se pudo eliminar el registro de avería");
+        const msg = json.error || "No se pudo eliminar el registro de avería";
+        setErrorMsg(msg);
+        notify({ title: "Error al eliminar", description: msg, variant: "error" });
       } else {
         setDeletingRecord(null);
         notify({
@@ -273,6 +314,10 @@ export default function AveriasPage() {
         });
         await reloadAfterMutation();
       }
+    } catch {
+      const msg = "Error de conexión al eliminar la avería.";
+      setErrorMsg(msg);
+      notify({ title: "Error de conexión", description: msg, variant: "error" });
     } finally {
       setDeletingBusy(false);
     }
@@ -290,8 +335,8 @@ export default function AveriasPage() {
 
   const selectedLot = lots.find((l) => l.id === form.lotId);
   const previewUnits = selectedLot
-    ? form.boxesAffected * selectedLot.product.unitsPerBox +
-      form.looseUnitsAffected
+    ? toNonNegInt(form.boxesAffected) * selectedLot.product.unitsPerBox +
+      toNonNegInt(form.looseUnitsAffected)
     : 0;
   const previewLoss = selectedLot
     ? previewUnits * selectedLot.product.unitCost
@@ -375,7 +420,7 @@ export default function AveriasPage() {
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-[11px]">
             Impacto Económico Estimado
           </p>
-          <p className="tabular-nums mt-1 text-xl font-bold text-red-700 dark:text-red-400 sm:text-2xl">
+          <p className="tabular-nums mt-1 text-lg font-bold text-red-700 dark:text-red-400 sm:text-xl lg:text-2xl">
             {formatCurrencyCOP(totalLoss)}
           </p>
         </div>
@@ -458,6 +503,7 @@ export default function AveriasPage() {
                   <button
                     type="button"
                     onClick={() => {
+                      setErrorMsg(null);
                       setEditingRecord(rec);
                       setUpdateForm({
                         resolutionStatus: rec.resolutionStatus,
@@ -574,6 +620,7 @@ export default function AveriasPage() {
                         <button
                           type="button"
                           onClick={() => {
+                            setErrorMsg(null);
                             setEditingRecord(rec);
                             setUpdateForm({
                               resolutionStatus: rec.resolutionStatus,
@@ -632,13 +679,29 @@ export default function AveriasPage() {
         }
         maxWidthClass="max-w-lg"
         closeDisabled={submitting}
-      >
-        {errorMsg && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300">
-            {errorMsg}
+        error={errorMsg}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setShowModal(false)}
+              disabled={submitting}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="damaged-create-form"
+              disabled={submitting}
+              className="ui-btn ui-btn-orange"
+            >
+              {submitting ? "Registrando..." : "Registrar Avería"}
+            </button>
           </div>
-        )}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        }
+      >
+        <form id="damaged-create-form" noValidate onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
               Lote Afectado *
@@ -704,8 +767,8 @@ export default function AveriasPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="col-span-2 sm:col-span-1">
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 Severidad
               </label>
@@ -725,12 +788,14 @@ export default function AveriasPage() {
               </label>
               <input
                 type="number"
+                inputMode="numeric"
                 min={0}
+                placeholder="0"
                 value={form.boxesAffected}
                 onChange={(e) =>
                   setForm({
                     ...form,
-                    boxesAffected: Number(e.target.value),
+                    boxesAffected: e.target.value,
                   })
                 }
                 className="ui-input mt-1"
@@ -742,12 +807,14 @@ export default function AveriasPage() {
               </label>
               <input
                 type="number"
+                inputMode="numeric"
                 min={0}
+                placeholder="0"
                 value={form.looseUnitsAffected}
                 onChange={(e) =>
                   setForm({
                     ...form,
-                    looseUnitsAffected: Number(e.target.value),
+                    looseUnitsAffected: e.target.value,
                   })
                 }
                 className="ui-input mt-1"
@@ -816,24 +883,6 @@ export default function AveriasPage() {
               className="ui-textarea mt-1"
             />
           </div>
-
-          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={() => setShowModal(false)}
-              disabled={submitting}
-              className="ui-btn ui-btn-secondary"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="ui-btn ui-btn-orange"
-            >
-              {submitting ? "Registrando..." : "Registrar Avería"}
-            </button>
-          </div>
         </form>
       </Modal>
 
@@ -851,9 +900,30 @@ export default function AveriasPage() {
         }
         maxWidthClass="max-w-md"
         closeDisabled={updating}
+        error={errorMsg}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setEditingRecord(null)}
+              disabled={updating}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="damaged-update-form"
+              disabled={updating}
+              className="ui-btn ui-btn-primary"
+            >
+              {updating ? "Actualizando..." : "Actualizar Gestión"}
+            </button>
+          </div>
+        }
       >
         {editingRecord && (
-          <form onSubmit={handleUpdateResolution} className="space-y-4">
+          <form id="damaged-update-form" noValidate onSubmit={handleUpdateResolution} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 Estado de Resolución
@@ -919,23 +989,6 @@ export default function AveriasPage() {
                 className="ui-textarea mt-1"
               />
             </div>
-            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setEditingRecord(null)}
-                disabled={updating}
-                className="ui-btn ui-btn-secondary"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                disabled={updating}
-                className="ui-btn ui-btn-primary"
-              >
-                {updating ? "Actualizando..." : "Actualizar Gestión"}
-              </button>
-            </div>
           </form>
         )}
       </Modal>
@@ -950,6 +1003,27 @@ export default function AveriasPage() {
         }
         maxWidthClass="max-w-md"
         closeDisabled={deletingBusy}
+        error={errorMsg}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setDeletingRecord(null)}
+              disabled={deletingBusy}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDeleteRecord}
+              disabled={deletingBusy}
+              className="ui-btn ui-btn-danger"
+            >
+              {deletingBusy ? "Eliminando..." : "Eliminar avería"}
+            </button>
+          </div>
+        }
       >
         {deletingRecord && (
           <>
@@ -980,29 +1054,6 @@ export default function AveriasPage() {
                 </span>
               </label>
             )}
-            {errorMsg && (
-              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300">
-                {errorMsg}
-              </div>
-            )}
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDeletingRecord(null)}
-                disabled={deletingBusy}
-                className="ui-btn ui-btn-secondary"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDeleteRecord}
-                disabled={deletingBusy}
-                className="ui-btn ui-btn-danger"
-              >
-                {deletingBusy ? "Eliminando..." : "Eliminar avería"}
-              </button>
-            </div>
           </>
         )}
       </Modal>

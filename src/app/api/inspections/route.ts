@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   computeDaysToExpiry,
   computeLotStockMetrics,
   deriveLotStatus,
+  dispatchPendingExpiryNotifications,
   logActivity,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
@@ -40,19 +41,32 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const warehouseId = String(body.warehouseId ?? "");
-    const lotId = body.lotId ? String(body.lotId) : null;
+    let warehouseId = String(body.warehouseId ?? "").trim();
+    const lotId = body.lotId ? String(body.lotId).trim() : null;
     const inspectorName = String(body.inspectorName ?? "").trim();
     const inspectionType = String(body.inspectionType ?? "PROGRAMADA");
     const status = String(body.status ?? "APROBADA");
-    const checkedBoxes = Math.max(0, Math.floor(Number(body.checkedBoxes ?? 0)));
-    const checkedUnits = Math.max(0, Math.floor(Number(body.checkedUnits ?? 0)));
+    const rawBoxes = Number(body.checkedBoxes ?? 0);
+    const rawUnits = Number(body.checkedUnits ?? 0);
+    const checkedBoxes = Number.isFinite(rawBoxes)
+      ? Math.max(0, Math.floor(rawBoxes))
+      : 0;
+    const checkedUnits = Number.isFinite(rawUnits)
+      ? Math.max(0, Math.floor(rawUnits))
+      : 0;
     const expiryVerified = Boolean(body.expiryVerified ?? true);
     const findings = String(body.findings ?? "").trim();
     const correctiveAction = body.correctiveAction
       ? String(body.correctiveAction).trim()
       : null;
     const syncStockFromInspection = Boolean(body.syncStockFromInspection ?? false);
+
+    if (!warehouseId) {
+      const defaultWh = await prisma.warehouse.findFirst({
+        orderBy: { createdAt: "asc" },
+      });
+      warehouseId = defaultWh?.id ?? "";
+    }
 
     if (!warehouseId || !inspectorName || !findings) {
       return NextResponse.json(
@@ -149,7 +163,15 @@ export async function POST(req: NextRequest) {
     });
 
     if (syncStockFromInspection) {
-      await syncAlertsAndStatuses(inspectorName);
+      await syncAlertsAndStatuses(inspectorName, {
+        sendWhatsApp: false,
+        sendTelegram: false,
+      });
+      after(() => {
+        void dispatchPendingExpiryNotifications(inspectorName).catch((err) =>
+          console.error("Error enviando notificaciones en segundo plano:", err)
+        );
+      });
     }
 
     return NextResponse.json({ inspection }, { status: 201 });

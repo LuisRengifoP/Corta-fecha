@@ -30,14 +30,20 @@ const MONTHS_ES = [
   "Dic",
 ];
 
+function toNonNegInt(value: unknown): number {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.floor(n));
+}
+
 export function sanitizeCounts(counts: PackagingCounts) {
   return {
-    boxes: Math.max(0, Math.floor(Number(counts.boxes ?? 0))),
-    packs: Math.max(0, Math.floor(Number(counts.packs ?? 0))),
-    dispacks: Math.max(0, Math.floor(Number(counts.dispacks ?? 0))),
-    displays: Math.max(0, Math.floor(Number(counts.displays ?? 0))),
-    bags: Math.max(0, Math.floor(Number(counts.bags ?? 0))),
-    looseUnits: Math.max(0, Math.floor(Number(counts.looseUnits ?? 0))),
+    boxes: toNonNegInt(counts.boxes),
+    packs: toNonNegInt(counts.packs),
+    dispacks: toNonNegInt(counts.dispacks),
+    displays: toNonNegInt(counts.displays),
+    bags: toNonNegInt(counts.bags),
+    looseUnits: toNonNegInt(counts.looseUnits),
   };
 }
 
@@ -92,8 +98,29 @@ export function buildQuantityText(
   return base;
 }
 
+function parseMonthYearString(raw: string): { year: number; month1Based: number } | null {
+  const trimmed = raw.trim();
+  const ym = /^(\d{4})[-/](\d{1,2})$/.exec(trimmed);
+  if (ym) {
+    const year = Number(ym[1]);
+    const month1Based = Number(ym[2]);
+    if (year >= 1900 && year <= 2200 && month1Based >= 1 && month1Based <= 12) {
+      return { year, month1Based };
+    }
+  }
+  const my = /^(\d{1,2})[-/](\d{4})$/.exec(trimmed);
+  if (my) {
+    const month1Based = Number(my[1]);
+    const year = Number(my[2]);
+    if (year >= 1900 && year <= 2200 && month1Based >= 1 && month1Based <= 12) {
+      return { year, month1Based };
+    }
+  }
+  return null;
+}
+
 /**
- * Resuelve fecha exacta (YYYY-MM-DD) o Mes/Año (YYYY-MM) al último día del mes
+ * Resuelve fecha exacta (YYYY-MM-DD) o Mes/Año (YYYY-MM / MM/YYYY) al último día del mes
  * para cálculo de vencimientos y alertas, preservando una etiqueta fiel.
  */
 export function parseFlexibleExpiryInput(params: {
@@ -109,13 +136,16 @@ export function parseFlexibleExpiryInput(params: {
   const precision =
     params.expiryPrecision === "MES_ANO" ? "MES_ANO" : "EXACTA";
 
-  if (precision === "MES_ANO" && params.expiryMonth) {
-    const match = /^(\d{4})-(\d{2})$/.exec(params.expiryMonth.trim());
-    if (match) {
-      const year = Number(match[1]);
-      const month1Based = Number(match[2]);
-      // Día 0 del mes siguiente = último día del mes indicado
-      const lastDay = new Date(year, month1Based, 0, 12, 0, 0, 0);
+  if (precision === "MES_ANO") {
+    const monthSource = params.expiryMonth?.trim() || "";
+    if (monthSource) {
+      const parsedMY = parseMonthYearString(monthSource);
+      if (!parsedMY) {
+        throw new Error("Mes/Año de vencimiento inválido (use MM/AAAA o AAAA-MM)");
+      }
+      const { year, month1Based } = parsedMY;
+      // Día 0 del mes siguiente = último día del mes indicado a mediodía UTC
+      const lastDay = new Date(Date.UTC(year, month1Based, 0, 12, 0, 0, 0));
       const shortYear = String(year).slice(-2);
       const defaultDisplay = `${MONTHS_ES[month1Based - 1] ?? month1Based}-${shortYear}`;
       return {
@@ -126,37 +156,48 @@ export function parseFlexibleExpiryInput(params: {
     }
   }
 
-  const rawDate = params.expiryDate ? new Date(params.expiryDate) : new Date();
-  if (!Number.isNaN(rawDate.getTime())) {
-    // Normalizar a mediodía local para evitar desfases de zona horaria
-    const normalized = new Date(
-      rawDate.getUTCFullYear(),
-      rawDate.getUTCMonth(),
-      rawDate.getUTCDate(),
-      12,
-      0,
-      0,
-      0
+  const rawDateStr = params.expiryDate?.trim() ?? "";
+  if (!rawDateStr) {
+    throw new Error(
+      precision === "MES_ANO"
+        ? "Seleccione el mes y año de vencimiento"
+        : "La fecha de vencimiento es obligatoria"
     );
-    const dd = String(normalized.getDate()).padStart(2, "0");
-    const mmm = MONTHS_ES[normalized.getMonth()];
-    const yy = String(normalized.getFullYear()).slice(-2);
+  }
+
+  const isoOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(rawDateStr);
+  const rawDate = isoOnly
+    ? new Date(
+        Date.UTC(
+          Number(isoOnly[1]),
+          Number(isoOnly[2]) - 1,
+          Number(isoOnly[3]),
+          12,
+          0,
+          0,
+          0
+        )
+      )
+    : new Date(rawDateStr);
+
+  if (!Number.isNaN(rawDate.getTime())) {
+    const year = rawDate.getUTCFullYear();
+    const monthIndex = rawDate.getUTCMonth();
+    const day = rawDate.getUTCDate();
+    const normalized = new Date(Date.UTC(year, monthIndex, day, 12, 0, 0, 0));
+    const finalDate =
+      precision === "MES_ANO"
+        ? new Date(Date.UTC(year, monthIndex + 1, 0, 12, 0, 0, 0))
+        : normalized;
+
+    const dd = String(finalDate.getUTCDate()).padStart(2, "0");
+    const mmm = MONTHS_ES[finalDate.getUTCMonth()];
+    const yy = String(finalDate.getUTCFullYear()).slice(-2);
     const defaultDisplay =
       precision === "MES_ANO" ? `${mmm}-${yy}` : `${dd}-${mmm}-${yy}`;
 
     return {
-      expiryDate:
-        precision === "MES_ANO"
-          ? new Date(
-              normalized.getFullYear(),
-              normalized.getMonth() + 1,
-              0,
-              12,
-              0,
-              0,
-              0
-            )
-          : normalized,
+      expiryDate: finalDate,
       expiryPrecision: precision,
       expiryDisplay: params.expiryDisplay?.trim() || defaultDisplay,
     };
@@ -173,11 +214,11 @@ export function formatExpiryLabel(
   if (expiryDisplay && expiryDisplay.trim()) return expiryDisplay;
   const d = typeof expiryDate === "string" ? new Date(expiryDate) : expiryDate;
   if (Number.isNaN(d.getTime())) return "—";
-  const mmm = MONTHS_ES[d.getMonth()];
-  const yy = String(d.getFullYear()).slice(-2);
+  const mmm = MONTHS_ES[d.getUTCMonth()];
+  const yy = String(d.getUTCFullYear()).slice(-2);
   if (expiryPrecision === "MES_ANO") {
     return `${mmm}-${yy}`;
   }
-  const dd = String(d.getDate()).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
   return `${dd}-${mmm}-${yy}`;
 }

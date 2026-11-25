@@ -401,11 +401,16 @@ export function HelpBubble() {
 
       {/* Panel / Burbuja de Ayuda Completa */}
       {open && (
-        <div
-          className="cf-animate-popover fixed inset-x-3 bottom-[4.75rem] top-16 z-50 flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl ring-1 ring-slate-900/10 dark:border-slate-800 dark:bg-slate-900 dark:ring-white/10 sm:inset-x-auto sm:bottom-20 sm:right-5 sm:top-auto sm:h-[min(78vh,680px)] sm:w-[calc(100vw-2.5rem)] sm:max-w-xl"
-          role="dialog"
-          aria-label="Centro de Ayuda del Sistema Corta Fecha"
-        >
+        <>
+          <div
+            className="cf-animate-fade fixed inset-0 z-40 bg-slate-900/45 backdrop-blur-[1px] lg:hidden"
+            onClick={() => setOpen(false)}
+          />
+          <div
+            className="cf-animate-popover fixed inset-x-3 bottom-[4.75rem] top-16 z-50 flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl ring-1 ring-slate-900/10 dark:border-slate-800 dark:bg-slate-900 dark:ring-white/10 sm:inset-x-auto sm:bottom-20 sm:right-5 sm:top-auto sm:h-[min(78vh,680px)] sm:w-[calc(100vw-2.5rem)] sm:max-w-xl"
+            role="dialog"
+            aria-label="Centro de Ayuda del Sistema Corta Fecha"
+          >
           {/* Cabecera */}
           <div className="border-b border-slate-200 bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950 px-5 py-4 text-white dark:border-slate-800">
             <div className="flex items-start justify-between gap-3">
@@ -888,6 +893,7 @@ export function HelpBubble() {
             <span>Sistema Corta Fecha · Distrimarcas S.A.S.</span>
           </div>
         </div>
+        </>
       )}
     </>
   );

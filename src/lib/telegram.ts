@@ -176,6 +176,7 @@ export async function sendExpirationAlertsTelegram(
     const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(8000),
       body: JSON.stringify({
         chat_id: chatId,
         text: html,

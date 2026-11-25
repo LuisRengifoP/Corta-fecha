@@ -60,7 +60,7 @@ export default function HistorialPage() {
           if (entityType) q.set("entityType", entityType);
           if (debouncedSearch) q.set("search", debouncedSearch);
           const res = await fetch(`/api/activity?${q.toString()}`);
-          if (!res.ok) return null;
+          if (!res.ok) throw new Error("No se pudo consultar el historial");
           return res.json();
         },
         { ttlMs: 10_000 }
@@ -72,6 +72,8 @@ export default function HistorialPage() {
           setPage(json.page);
         }
       }
+    } catch {
+      // Ignorar fallo transitorio sin sobrescribir caché
     } finally {
       setLoading(false);
     }
@@ -190,7 +192,7 @@ export default function HistorialPage() {
               <p className="font-mono font-semibold text-indigo-700 dark:text-indigo-400">
                 {log.action}
               </p>
-              <p className="text-slate-700 dark:text-slate-300">{log.summary}</p>
+              <p className="break-words text-slate-700 dark:text-slate-300">{log.summary}</p>
               <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                 Responsable: {log.actor}
               </p>

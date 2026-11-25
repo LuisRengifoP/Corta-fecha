@@ -77,6 +77,74 @@ interface InventoryLot {
   warehouse: Warehouse;
 }
 
+const MONTH_OPTIONS = [
+  { value: "01", label: "01 - Ene" },
+  { value: "02", label: "02 - Feb" },
+  { value: "03", label: "03 - Mar" },
+  { value: "04", label: "04 - Abr" },
+  { value: "05", label: "05 - May" },
+  { value: "06", label: "06 - Jun" },
+  { value: "07", label: "07 - Jul" },
+  { value: "08", label: "08 - Ago" },
+  { value: "09", label: "09 - Sep" },
+  { value: "10", label: "10 - Oct" },
+  { value: "11", label: "11 - Nov" },
+  { value: "12", label: "12 - Dic" },
+];
+
+function MonthYearSelect({
+  value,
+  onChange,
+  className = "",
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  className?: string;
+}) {
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 12 }, (_, i) => String(currentYear - 1 + i));
+  const [yr = "", mo = ""] = value ? value.split("-") : [];
+
+  return (
+    <div className={`grid grid-cols-2 gap-2 ${className}`}>
+      <select
+        aria-label="Mes de vencimiento"
+        value={mo}
+        onChange={(e) => {
+          const nextMo = e.target.value;
+          const nextYr = yr || String(currentYear);
+          onChange(nextMo ? `${nextYr}-${nextMo}` : "");
+        }}
+        className="ui-select"
+      >
+        <option value="">Mes...</option>
+        {MONTH_OPTIONS.map((m) => (
+          <option key={m.value} value={m.value}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label="Año de vencimiento"
+        value={yr}
+        onChange={(e) => {
+          const nextYr = e.target.value;
+          const nextMo = mo || "01";
+          onChange(nextYr ? `${nextYr}-${nextMo}` : "");
+        }}
+        className="ui-select"
+      >
+        <option value="">Año...</option>
+        {years.map((y) => (
+          <option key={y} value={y}>
+            {y}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 export default function InventarioPage() {
   const { notify } = useToast();
   const { user, refreshAlertsCount } = useAppSession();
@@ -131,25 +199,25 @@ export default function InventarioPage() {
     category: "Confitería y Dulces",
     brand: "",
     supplier: "",
-    unitsPerBox: 24,
+    unitsPerBox: "24",
     unitsPerPack: "",
     unitsPerDispack: "",
     unitsPerDisplay: "",
     unitsPerBag: "",
-    unitCost: 0,
-    alertThresholdDays: 60,
+    unitCost: "",
+    alertThresholdDays: "60",
   });
 
   const [lotForm, setLotForm] = useState({
     productId: "",
     warehouseId: "",
     lotNumber: "",
-    boxes: 0,
-    packs: 0,
-    dispacks: 0,
-    displays: 0,
-    bags: 0,
-    looseUnits: 0,
+    boxes: "",
+    packs: "",
+    dispacks: "",
+    displays: "",
+    bags: "",
+    looseUnits: "",
     quantityTextOverride: "",
     expiryPrecision: "EXACTA" as "EXACTA" | "MES_ANO",
     expiryDate: "",
@@ -161,12 +229,12 @@ export default function InventarioPage() {
   });
 
   const [editForm, setEditForm] = useState({
-    boxes: 0,
-    packs: 0,
-    dispacks: 0,
-    displays: 0,
-    bags: 0,
-    looseUnits: 0,
+    boxes: "",
+    packs: "",
+    dispacks: "",
+    displays: "",
+    bags: "",
+    looseUnits: "",
     quantityTextOverride: "",
     expiryPrecision: "EXACTA" as "EXACTA" | "MES_ANO",
     expiryDate: "",
@@ -177,6 +245,16 @@ export default function InventarioPage() {
     notes: "",
     actor: "Encargada de Bodega",
   });
+
+  const toNonNegInt = (val: string | number): number => {
+    const n = Number(val);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  };
+
+  const toNonNegNum = (val: string | number): number => {
+    const n = Number(val);
+    return Number.isFinite(n) ? Math.max(0, n) : 0;
+  };
 
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search);
@@ -193,39 +271,53 @@ export default function InventarioPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
+  useEffect(() => {
+    if (warehouses[0]?.id || products[0]?.id) {
+      setLotForm((prev) => ({
+        ...prev,
+        warehouseId: prev.warehouseId || warehouses[0]?.id || "",
+        productId: prev.productId || products[0]?.id || "",
+      }));
+    }
+  }, [warehouses, products]);
+
   const loadReferences = useCallback(async (force = false) => {
-    const [prodsList, supList, whList] = await Promise.all([
-      fetchWithCache<Product[]>(
-        "ref:products",
-        async () => {
-          const res = await fetch("/api/products");
-          if (!res.ok) return [];
-          return (await res.json()).products ?? [];
-        },
-        { force, ttlMs: 120_000 }
-      ),
-      fetchWithCache<Supplier[]>(
-        "ref:suppliers",
-        async () => {
-          const res = await fetch("/api/suppliers");
-          if (!res.ok) return [];
-          return (await res.json()).suppliers ?? [];
-        },
-        { force, ttlMs: 120_000 }
-      ),
-      fetchWithCache<Warehouse[]>(
-        "ref:warehouses",
-        async () => {
-          const res = await fetch("/api/warehouses");
-          if (!res.ok) return [];
-          return (await res.json()).warehouses ?? [];
-        },
-        { force, ttlMs: 120_000 }
-      ),
-    ]);
-    setProducts(prodsList);
-    setSuppliers(supList);
-    setWarehouses(whList);
+    try {
+      const [prodsList, supList, whList] = await Promise.all([
+        fetchWithCache<Product[]>(
+          "ref:products",
+          async () => {
+            const res = await fetch("/api/products");
+            if (!res.ok) throw new Error("No se pudieron cargar productos");
+            return (await res.json()).products ?? [];
+          },
+          { force, ttlMs: 120_000 }
+        ),
+        fetchWithCache<Supplier[]>(
+          "ref:suppliers",
+          async () => {
+            const res = await fetch("/api/suppliers");
+            if (!res.ok) throw new Error("No se pudieron cargar proveedores");
+            return (await res.json()).suppliers ?? [];
+          },
+          { force, ttlMs: 120_000 }
+        ),
+        fetchWithCache<Warehouse[]>(
+          "ref:warehouses",
+          async () => {
+            const res = await fetch("/api/warehouses");
+            if (!res.ok) throw new Error("No se pudieron cargar bodegas");
+            return (await res.json()).warehouses ?? [];
+          },
+          { force, ttlMs: 120_000 }
+        ),
+      ]);
+      setProducts(prodsList);
+      setSuppliers(supList);
+      setWarehouses(whList);
+    } catch {
+      // Mantener referencias previas si falla la red
+    }
   }, []);
 
   const loadLots = useCallback(
@@ -244,12 +336,14 @@ export default function InventarioPage() {
           cacheKey,
           async () => {
             const res = await fetch(`/api/inventory?${q.toString()}`);
-            if (!res.ok) return [];
+            if (!res.ok) throw new Error("No se pudo cargar el inventario");
             return (await res.json()).lots ?? [];
           },
           { force, ttlMs: 15_000 }
         );
         setLots(lotsList);
+      } catch {
+        // Mantener lista previa si falla la consulta
       } finally {
         setLoading(false);
       }
@@ -277,16 +371,36 @@ export default function InventarioPage() {
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    if (!prodForm.sku.trim() || !prodForm.name.trim()) {
+      setErrorMsg("Código (SKU) y Nombre del producto son obligatorios.");
+      return;
+    }
+    const unitsPerBox = toNonNegInt(prodForm.unitsPerBox);
+    if (unitsPerBox < 1) {
+      setErrorMsg("Las unidades por caja (Unid/CJ) deben ser al menos 1.");
+      return;
+    }
     setSubmittingProduct(true);
     try {
       const res = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(prodForm),
+        body: JSON.stringify({
+          ...prodForm,
+          unitsPerBox,
+          unitCost: toNonNegNum(prodForm.unitCost),
+          alertThresholdDays: Math.max(
+            1,
+            toNonNegInt(prodForm.alertThresholdDays || "60")
+          ),
+          actor: operatorName,
+        }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setErrorMsg(json.error || "Error al crear producto");
+        const msg = json.error || "Error al crear producto";
+        setErrorMsg(msg);
+        notify({ title: "No se pudo crear producto", description: msg, variant: "error" });
         return;
       }
       const createdName = prodForm.name;
@@ -298,13 +412,13 @@ export default function InventarioPage() {
         category: "Confitería y Dulces",
         brand: "",
         supplier: "",
-        unitsPerBox: 24,
+        unitsPerBox: "24",
         unitsPerPack: "",
         unitsPerDispack: "",
         unitsPerDisplay: "",
         unitsPerBag: "",
-        unitCost: 0,
-        alertThresholdDays: 60,
+        unitCost: "",
+        alertThresholdDays: "60",
       });
       notify({
         title: "Producto agregado al catálogo",
@@ -314,6 +428,10 @@ export default function InventarioPage() {
       invalidateCache("ref:products");
       invalidateCache("ref:suppliers");
       await loadReferences(true);
+    } catch {
+      const msg = "Error de conexión al guardar el producto.";
+      setErrorMsg(msg);
+      notify({ title: "Error de conexión", description: msg, variant: "error" });
     } finally {
       setSubmittingProduct(false);
     }
@@ -322,6 +440,23 @@ export default function InventarioPage() {
   const handleCreateLot = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    const resolvedWarehouseId = lotForm.warehouseId || warehouses[0]?.id || "";
+    if (!lotForm.productId) {
+      setErrorMsg("Selecciona un producto del catálogo.");
+      return;
+    }
+    if (!lotForm.lotNumber.trim()) {
+      setErrorMsg("Ingresa el número de lote.");
+      return;
+    }
+    if (lotForm.expiryPrecision === "EXACTA" && !lotForm.expiryDate) {
+      setErrorMsg("Selecciona la fecha de vencimiento exacta.");
+      return;
+    }
+    if (lotForm.expiryPrecision === "MES_ANO" && !lotForm.expiryMonth) {
+      setErrorMsg("Selecciona el mes y año de vencimiento.");
+      return;
+    }
     setSubmittingLot(true);
     try {
       const res = await fetch("/api/inventory", {
@@ -329,27 +464,36 @@ export default function InventarioPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...lotForm,
+          warehouseId: resolvedWarehouseId,
+          boxes: toNonNegInt(lotForm.boxes),
+          packs: toNonNegInt(lotForm.packs),
+          dispacks: toNonNegInt(lotForm.dispacks),
+          displays: toNonNegInt(lotForm.displays),
+          bags: toNonNegInt(lotForm.bags),
+          looseUnits: toNonNegInt(lotForm.looseUnits),
           quantityText: lotForm.quantityTextOverride.trim() || undefined,
         }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setErrorMsg(json.error || "Error al registrar lote");
+        const msg = json.error || "Error al registrar lote";
+        setErrorMsg(msg);
+        notify({ title: "No se pudo guardar el lote", description: msg, variant: "error" });
         return;
       }
-      const createdLotNum = lotForm.lotNumber;
+      const createdLotNum = lotForm.lotNumber.trim();
       setShowLotModal(false);
       setLotProductSearch("");
       setLotForm({
         productId: products[0]?.id ?? "",
         warehouseId: warehouses[0]?.id ?? "",
         lotNumber: "",
-        boxes: 0,
-        packs: 0,
-        dispacks: 0,
-        displays: 0,
-        bags: 0,
-        looseUnits: 0,
+        boxes: "",
+        packs: "",
+        dispacks: "",
+        displays: "",
+        bags: "",
+        looseUnits: "",
         quantityTextOverride: "",
         expiryPrecision: "EXACTA",
         expiryDate: "",
@@ -365,6 +509,10 @@ export default function InventarioPage() {
         variant: "success",
       });
       await refreshAfterLotMutation();
+    } catch {
+      const msg = "Error de conexión al guardar el lote.";
+      setErrorMsg(msg);
+      notify({ title: "Error de conexión", description: msg, variant: "error" });
     } finally {
       setSubmittingLot(false);
     }
@@ -375,13 +523,14 @@ export default function InventarioPage() {
     setEditingLot(lot);
     const isoDate = lot.expiryDate.slice(0, 10);
     const isoMonth = lot.expiryDate.slice(0, 7);
+    const numStr = (n: number) => (n > 0 ? String(n) : "");
     setEditForm({
-      boxes: lot.boxes,
-      packs: lot.packs,
-      dispacks: lot.dispacks,
-      displays: lot.displays,
-      bags: lot.bags,
-      looseUnits: lot.looseUnits,
+      boxes: numStr(lot.boxes),
+      packs: numStr(lot.packs),
+      dispacks: numStr(lot.dispacks),
+      displays: numStr(lot.displays),
+      bags: numStr(lot.bags),
+      looseUnits: numStr(lot.looseUnits),
       quantityTextOverride: "",
       expiryPrecision:
         lot.expiryPrecision === "MES_ANO" ? "MES_ANO" : "EXACTA",
@@ -389,7 +538,7 @@ export default function InventarioPage() {
       expiryMonth: isoMonth,
       expiryDisplay: lot.expiryDisplay ?? "",
       locationCode: lot.locationCode ?? "",
-      status: lot.status,
+      status: lot.status === "CUARENTENA" ? "CUARENTENA" : "ACTIVO",
       notes: lot.notes ?? "",
       actor: operatorName,
     });
@@ -399,6 +548,14 @@ export default function InventarioPage() {
     e.preventDefault();
     if (!editingLot) return;
     setErrorMsg(null);
+    if (editForm.expiryPrecision === "EXACTA" && !editForm.expiryDate) {
+      setErrorMsg("Selecciona la fecha de vencimiento exacta.");
+      return;
+    }
+    if (editForm.expiryPrecision === "MES_ANO" && !editForm.expiryMonth) {
+      setErrorMsg("Selecciona el mes y año de vencimiento.");
+      return;
+    }
     setSubmittingEdit(true);
     try {
       const res = await fetch(`/api/inventory/${editingLot.id}`, {
@@ -406,12 +563,20 @@ export default function InventarioPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...editForm,
+          boxes: toNonNegInt(editForm.boxes),
+          packs: toNonNegInt(editForm.packs),
+          dispacks: toNonNegInt(editForm.dispacks),
+          displays: toNonNegInt(editForm.displays),
+          bags: toNonNegInt(editForm.bags),
+          looseUnits: toNonNegInt(editForm.looseUnits),
           quantityText: editForm.quantityTextOverride.trim() || undefined,
         }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setErrorMsg(json.error || "No se pudo actualizar el lote");
+        const msg = json.error || "No se pudo actualizar el lote";
+        setErrorMsg(msg);
+        notify({ title: "Error al actualizar lote", description: msg, variant: "error" });
         return;
       }
       const lotNum = editingLot.lotNumber;
@@ -422,6 +587,10 @@ export default function InventarioPage() {
         variant: "success",
       });
       await refreshAfterLotMutation();
+    } catch {
+      const msg = "Error de conexión al actualizar el lote.";
+      setErrorMsg(msg);
+      notify({ title: "Error de conexión", description: msg, variant: "error" });
     } finally {
       setSubmittingEdit(false);
     }
@@ -440,7 +609,9 @@ export default function InventarioPage() {
       );
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        setErrorMsg(json.error || "No se pudo eliminar el lote");
+        const msg = json.error || "No se pudo eliminar el lote";
+        setErrorMsg(msg);
+        notify({ title: "Error al eliminar", description: msg, variant: "error" });
       } else {
         const lotNum = deletingLot.lotNumber;
         setDeletingLot(null);
@@ -451,6 +622,10 @@ export default function InventarioPage() {
         });
         await refreshAfterLotMutation();
       }
+    } catch {
+      const msg = "Error de conexión al eliminar el lote.";
+      setErrorMsg(msg);
+      notify({ title: "Error de conexión", description: msg, variant: "error" });
     } finally {
       setDeletingBusy(false);
     }
@@ -469,7 +644,9 @@ export default function InventarioPage() {
       );
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setProductError(json.error || "No se pudo eliminar el producto");
+        const msg = json.error || "No se pudo eliminar el producto";
+        setProductError(msg);
+        notify({ title: "No se pudo eliminar", description: msg, variant: "error" });
         setDeletingProduct(null);
         return;
       }
@@ -483,6 +660,11 @@ export default function InventarioPage() {
       invalidateCache("ref:products");
       invalidateCache("ref:suppliers");
       await loadReferences(true);
+    } catch {
+      const msg = "Error de conexión al eliminar el producto.";
+      setProductError(msg);
+      notify({ title: "Error de conexión", description: msg, variant: "error" });
+      setDeletingProduct(null);
     } finally {
       setDeletingProductBusy(false);
     }
@@ -517,16 +699,47 @@ export default function InventarioPage() {
   const selectedProductForLot = products.find(
     (p) => p.id === lotForm.productId
   );
-  const previewLotText = buildQuantityText(lotForm, selectedProductForLot);
+  const visibleLotProductOptions = (() => {
+    const sliced = filteredLotProducts.slice(0, 150);
+    if (
+      selectedProductForLot &&
+      filteredLotProducts.some((p) => p.id === selectedProductForLot.id) &&
+      !sliced.some((p) => p.id === selectedProductForLot.id)
+    ) {
+      return [selectedProductForLot, ...sliced];
+    }
+    return sliced;
+  })();
+
+  const lotCountsNumeric = {
+    boxes: toNonNegInt(lotForm.boxes),
+    packs: toNonNegInt(lotForm.packs),
+    dispacks: toNonNegInt(lotForm.dispacks),
+    displays: toNonNegInt(lotForm.displays),
+    bags: toNonNegInt(lotForm.bags),
+    looseUnits: toNonNegInt(lotForm.looseUnits),
+  };
+  const previewLotText = buildQuantityText(
+    lotCountsNumeric,
+    selectedProductForLot
+  );
   const previewLotUnits = selectedProductForLot
-    ? calculateUnitsFromPackaging(lotForm, selectedProductForLot)
+    ? calculateUnitsFromPackaging(lotCountsNumeric, selectedProductForLot)
     : 0;
 
+  const editCountsNumeric = {
+    boxes: toNonNegInt(editForm.boxes),
+    packs: toNonNegInt(editForm.packs),
+    dispacks: toNonNegInt(editForm.dispacks),
+    displays: toNonNegInt(editForm.displays),
+    bags: toNonNegInt(editForm.bags),
+    looseUnits: toNonNegInt(editForm.looseUnits),
+  };
   const previewEditText = editingLot
-    ? buildQuantityText(editForm, editingLot.product)
+    ? buildQuantityText(editCountsNumeric, editingLot.product)
     : "";
   const previewEditUnits = editingLot
-    ? calculateUnitsFromPackaging(editForm, editingLot.product)
+    ? calculateUnitsFromPackaging(editCountsNumeric, editingLot.product)
     : 0;
 
   const openNewLotModal = () => {
@@ -539,6 +752,9 @@ export default function InventarioPage() {
       actor: operatorName,
     }));
     setShowLotModal(true);
+    if (warehouses.length === 0 || products.length === 0) {
+      void loadReferences(true);
+    }
   };
 
   return (
@@ -598,7 +814,7 @@ export default function InventarioPage() {
               className="ui-btn ui-btn-emerald-soft border-0 px-2 py-2 text-xs sm:px-2.5 sm:py-1.5"
             >
               <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" />
-              Excel
+              <span className="truncate">Excel</span>
             </a>
             <a
               href={`/api/reports/export?type=corta_fecha&format=pdf${
@@ -607,7 +823,7 @@ export default function InventarioPage() {
               className="ui-btn ui-btn-rose-soft border-0 px-2 py-2 text-xs sm:px-2.5 sm:py-1.5"
             >
               <FileText className="h-3.5 w-3.5 shrink-0" />
-              PDF
+              <span className="truncate">PDF</span>
             </a>
             <a
               href={`/api/reports/export?type=general${
@@ -616,7 +832,7 @@ export default function InventarioPage() {
               className="ui-btn ui-btn-emerald px-2 py-2 text-xs sm:px-2.5 sm:py-1.5"
             >
               <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" />
-              Completo
+              <span className="truncate">Completo</span>
             </a>
           </div>
         </div>
@@ -650,6 +866,7 @@ export default function InventarioPage() {
           >
             <option value="">Cualquier fecha de vencimiento</option>
             <option value="expired">Ya vencidos</option>
+            <option value="critical">Vencidos y ≤ 15 días (Crítico)</option>
             <option value="15">Vencen en ≤ 15 días</option>
             <option value="30">Vencen en ≤ 30 días</option>
             <option value="60">Vencen en ≤ 60 días</option>
@@ -731,10 +948,10 @@ export default function InventarioPage() {
             <div key={lot.id} className="ui-card space-y-3 p-4">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="font-mono text-xs font-bold text-indigo-700 dark:text-indigo-400">
+                  <p className="break-words font-mono text-xs font-bold text-indigo-700 dark:text-indigo-400">
                     {lot.product.sku} · Lote {lot.lotNumber}
                   </p>
-                  <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  <p className="mt-0.5 break-words text-sm font-semibold text-slate-900 dark:text-slate-100">
                     {lot.product.name}
                   </p>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -768,11 +985,11 @@ export default function InventarioPage() {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => openEditModal(lot)}
-                  className="ui-btn ui-btn-secondary py-1.5 text-xs"
+                  className="ui-btn ui-btn-secondary py-2 text-xs"
                 >
                   <Edit3 className="h-3.5 w-3.5" />
                   Editar
@@ -783,7 +1000,7 @@ export default function InventarioPage() {
                     setErrorMsg(null);
                     setDeletingLot(lot);
                   }}
-                  className="ui-btn border border-red-200 bg-red-50 py-1.5 text-xs text-red-700 hover:bg-red-100 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-950"
+                  className="ui-btn border border-red-200 bg-red-50 py-2 text-xs text-red-700 hover:bg-red-100 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-950"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                   Eliminar
@@ -954,13 +1171,29 @@ export default function InventarioPage() {
         }
         maxWidthClass="max-w-xl"
         closeDisabled={submittingProduct}
-      >
-        {errorMsg && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300">
-            {errorMsg}
+        error={errorMsg}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setShowProductModal(false)}
+              disabled={submittingProduct}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="product-create-form"
+              disabled={submittingProduct}
+              className="ui-btn ui-btn-primary"
+            >
+              {submittingProduct ? "Guardando..." : "Guardar Producto"}
+            </button>
           </div>
-        )}
-        <form onSubmit={handleCreateProduct} className="space-y-4">
+        }
+      >
+        <form id="product-create-form" noValidate onSubmit={handleCreateProduct} className="space-y-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
@@ -1056,20 +1289,22 @@ export default function InventarioPage() {
             <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
               Equivalencias de Empaque en Unidades (opcional excepto Caja)
             </p>
-            <div className="mt-2.5 grid grid-cols-2 gap-2.5 sm:grid-cols-5">
+            <div className="mt-2.5 grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-5">
               <div>
                 <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
                   Unid/CJ *
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min={1}
                   required
+                  placeholder="24"
                   value={prodForm.unitsPerBox}
                   onChange={(e) =>
                     setProdForm({
                       ...prodForm,
-                      unitsPerBox: Number(e.target.value),
+                      unitsPerBox: e.target.value,
                     })
                   }
                   className="ui-input mt-1 px-2 py-1.5 text-xs"
@@ -1157,12 +1392,14 @@ export default function InventarioPage() {
               </label>
               <input
                 type="number"
+                inputMode="numeric"
                 min={0}
+                placeholder="0"
                 value={prodForm.unitCost}
                 onChange={(e) =>
                   setProdForm({
                     ...prodForm,
-                    unitCost: Number(e.target.value),
+                    unitCost: e.target.value,
                   })
                 }
                 className="ui-input mt-1"
@@ -1174,35 +1411,19 @@ export default function InventarioPage() {
               </label>
               <input
                 type="number"
+                inputMode="numeric"
                 min={1}
+                placeholder="60"
                 value={prodForm.alertThresholdDays}
                 onChange={(e) =>
                   setProdForm({
                     ...prodForm,
-                    alertThresholdDays: Number(e.target.value),
+                    alertThresholdDays: e.target.value,
                   })
                 }
                 className="ui-input mt-1"
               />
             </div>
-          </div>
-
-          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={() => setShowProductModal(false)}
-              disabled={submittingProduct}
-              className="ui-btn ui-btn-secondary"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={submittingProduct}
-              className="ui-btn ui-btn-primary"
-            >
-              {submittingProduct ? "Guardando..." : "Guardar Producto"}
-            </button>
           </div>
         </form>
       </Modal>
@@ -1216,13 +1437,29 @@ export default function InventarioPage() {
         icon={<Plus className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
         maxWidthClass="max-w-xl"
         closeDisabled={submittingLot}
-      >
-        {errorMsg && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300">
-            {errorMsg}
+        error={errorMsg}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setShowLotModal(false)}
+              disabled={submittingLot}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="lot-create-form"
+              disabled={submittingLot}
+              className="ui-btn ui-btn-primary"
+            >
+              {submittingLot ? "Registrando..." : "Registrar Lote"}
+            </button>
           </div>
-        )}
-        <form onSubmit={handleCreateLot} className="space-y-4">
+        }
+      >
+        <form id="lot-create-form" noValidate onSubmit={handleCreateLot} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
               Producto (Código SKU — Descripción) *
@@ -1247,6 +1484,8 @@ export default function InventarioPage() {
                     !matches.some((m) => m.id === lotForm.productId)
                   ) {
                     setLotForm({ ...lotForm, productId: matches[0].id });
+                  } else if (matches.length === 0) {
+                    setLotForm({ ...lotForm, productId: "" });
                   }
                 }}
                 placeholder="Filtrar por SKU, código de barras, nombre o proveedor..."
@@ -1262,7 +1501,7 @@ export default function InventarioPage() {
               className="ui-select mt-1.5"
             >
               <option value="">Seleccione un producto...</option>
-              {filteredLotProducts.slice(0, 150).map((p) => (
+              {visibleLotProductOptions.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.sku} — {p.name}
                   {p.supplier ? ` (${p.supplier.name})` : ""}
@@ -1326,19 +1565,21 @@ export default function InventarioPage() {
             <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
               Conteo Físico por Tipo de Empaque
             </p>
-            <div className="mt-2.5 grid grid-cols-3 gap-2 sm:grid-cols-6">
+            <div className="mt-2.5 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
               <div>
                 <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
                   Cajas (CJ)
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min={0}
+                  placeholder="0"
                   value={lotForm.boxes}
                   onChange={(e) =>
-                    setLotForm({ ...lotForm, boxes: Number(e.target.value) })
+                    setLotForm({ ...lotForm, boxes: e.target.value })
                   }
-                  className="ui-input mt-1 px-2 py-1.5 text-sm"
+                  className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                 />
               </div>
               <div>
@@ -1347,12 +1588,14 @@ export default function InventarioPage() {
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min={0}
+                  placeholder="0"
                   value={lotForm.packs}
                   onChange={(e) =>
-                    setLotForm({ ...lotForm, packs: Number(e.target.value) })
+                    setLotForm({ ...lotForm, packs: e.target.value })
                   }
-                  className="ui-input mt-1 px-2 py-1.5 text-sm"
+                  className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                 />
               </div>
               <div>
@@ -1361,15 +1604,17 @@ export default function InventarioPage() {
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min={0}
+                  placeholder="0"
                   value={lotForm.dispacks}
                   onChange={(e) =>
                     setLotForm({
                       ...lotForm,
-                      dispacks: Number(e.target.value),
+                      dispacks: e.target.value,
                     })
                   }
-                  className="ui-input mt-1 px-2 py-1.5 text-sm"
+                  className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                 />
               </div>
               <div>
@@ -1378,15 +1623,17 @@ export default function InventarioPage() {
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min={0}
+                  placeholder="0"
                   value={lotForm.displays}
                   onChange={(e) =>
                     setLotForm({
                       ...lotForm,
-                      displays: Number(e.target.value),
+                      displays: e.target.value,
                     })
                   }
-                  className="ui-input mt-1 px-2 py-1.5 text-sm"
+                  className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                 />
               </div>
               <div>
@@ -1395,12 +1642,14 @@ export default function InventarioPage() {
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min={0}
+                  placeholder="0"
                   value={lotForm.bags}
                   onChange={(e) =>
-                    setLotForm({ ...lotForm, bags: Number(e.target.value) })
+                    setLotForm({ ...lotForm, bags: e.target.value })
                   }
-                  className="ui-input mt-1 px-2 py-1.5 text-sm"
+                  className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                 />
               </div>
               <div>
@@ -1409,15 +1658,17 @@ export default function InventarioPage() {
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min={0}
+                  placeholder="0"
                   value={lotForm.looseUnits}
                   onChange={(e) =>
                     setLotForm({
                       ...lotForm,
-                      looseUnits: Number(e.target.value),
+                      looseUnits: e.target.value,
                     })
                   }
-                  className="ui-input mt-1 px-2 py-1.5 text-sm"
+                  className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                 />
               </div>
             </div>
@@ -1485,17 +1736,15 @@ export default function InventarioPage() {
                   <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                     Mes y Año * (toma último día del mes)
                   </label>
-                  <input
-                    type="month"
-                    required
+                  <MonthYearSelect
                     value={lotForm.expiryMonth}
-                    onChange={(e) =>
+                    onChange={(next) =>
                       setLotForm({
                         ...lotForm,
-                        expiryMonth: e.target.value,
+                        expiryMonth: next,
                       })
                     }
-                    className="ui-input mt-1"
+                    className="mt-1"
                   />
                 </div>
               )}
@@ -1559,24 +1808,6 @@ export default function InventarioPage() {
               className="ui-textarea mt-1"
             />
           </div>
-
-          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={() => setShowLotModal(false)}
-              disabled={submittingLot}
-              className="ui-btn ui-btn-secondary"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={submittingLot}
-              className="ui-btn ui-btn-primary"
-            >
-              {submittingLot ? "Registrando..." : "Registrar Lote"}
-            </button>
-          </div>
         </form>
       </Modal>
 
@@ -1593,120 +1824,147 @@ export default function InventarioPage() {
         icon={<Edit3 className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
         maxWidthClass="max-w-xl"
         closeDisabled={submittingEdit}
+        error={errorMsg}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setEditingLot(null)}
+              disabled={submittingEdit}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="lot-edit-form"
+              disabled={submittingEdit}
+              className="ui-btn ui-btn-primary"
+            >
+              {submittingEdit ? "Guardando..." : "Guardar Cambios"}
+            </button>
+          </div>
+        }
       >
         {editingLot && (
-          <>
-            {errorMsg && (
-              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300">
-                {errorMsg}
-              </div>
-            )}
-            <form onSubmit={handleUpdateLot} className="space-y-4">
+          <form id="lot-edit-form" noValidate onSubmit={handleUpdateLot} className="space-y-4">
               <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3.5 dark:border-slate-800 dark:bg-slate-800/50">
                 <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
                   Conteo Actualizado
                 </p>
-                <div className="mt-2.5 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                <div className="mt-2.5 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                      CJ
+                      Cajas (CJ)
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min={0}
+                      placeholder="0"
                       value={editForm.boxes}
                       onChange={(e) =>
                         setEditForm({
                           ...editForm,
-                          boxes: Number(e.target.value),
+                          boxes: e.target.value,
                         })
                       }
-                      className="ui-input mt-1 px-2 py-1.5 text-sm"
+                      className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                      PC
+                      Pacas (PC)
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min={0}
+                      placeholder="0"
                       value={editForm.packs}
                       onChange={(e) =>
                         setEditForm({
                           ...editForm,
-                          packs: Number(e.target.value),
+                          packs: e.target.value,
                         })
                       }
-                      className="ui-input mt-1 px-2 py-1.5 text-sm"
+                      className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                      DPL
+                      Dispack (DPL)
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min={0}
+                      placeholder="0"
                       value={editForm.dispacks}
                       onChange={(e) =>
                         setEditForm({
                           ...editForm,
-                          dispacks: Number(e.target.value),
+                          dispacks: e.target.value,
                         })
                       }
-                      className="ui-input mt-1 px-2 py-1.5 text-sm"
+                      className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                      DISP
+                      Display (DISP)
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min={0}
+                      placeholder="0"
                       value={editForm.displays}
                       onChange={(e) =>
                         setEditForm({
                           ...editForm,
-                          displays: Number(e.target.value),
+                          displays: e.target.value,
                         })
                       }
-                      className="ui-input mt-1 px-2 py-1.5 text-sm"
+                      className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                      BL
+                      Bolsas (BL)
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min={0}
+                      placeholder="0"
                       value={editForm.bags}
                       onChange={(e) =>
                         setEditForm({
                           ...editForm,
-                          bags: Number(e.target.value),
+                          bags: e.target.value,
                         })
                       }
-                      className="ui-input mt-1 px-2 py-1.5 text-sm"
+                      className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                      UN
+                      Unid. (UN)
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min={0}
+                      placeholder="0"
                       value={editForm.looseUnits}
                       onChange={(e) =>
                         setEditForm({
                           ...editForm,
-                          looseUnits: Number(e.target.value),
+                          looseUnits: e.target.value,
                         })
                       }
-                      className="ui-input mt-1 px-2 py-1.5 text-sm"
+                      className="ui-input mt-1 px-2.5 py-1.5 text-sm"
                     />
                   </div>
                 </div>
@@ -1737,6 +1995,7 @@ export default function InventarioPage() {
                           setEditForm({
                             ...editForm,
                             expiryPrecision: "EXACTA",
+                            expiryDisplay: "",
                           })
                         }
                       />
@@ -1751,6 +2010,7 @@ export default function InventarioPage() {
                           setEditForm({
                             ...editForm,
                             expiryPrecision: "MES_ANO",
+                            expiryDisplay: "",
                           })
                         }
                       />
@@ -1765,22 +2025,24 @@ export default function InventarioPage() {
                       required
                       value={editForm.expiryDate}
                       onChange={(e) =>
-                        setEditForm({ ...editForm, expiryDate: e.target.value })
+                        setEditForm({
+                          ...editForm,
+                          expiryDate: e.target.value,
+                          expiryDisplay: "",
+                        })
                       }
                       className="ui-input"
                     />
                   ) : (
-                    <input
-                      type="month"
-                      required
+                    <MonthYearSelect
                       value={editForm.expiryMonth}
-                      onChange={(e) =>
+                      onChange={(next) =>
                         setEditForm({
                           ...editForm,
-                          expiryMonth: e.target.value,
+                          expiryMonth: next,
+                          expiryDisplay: "",
                         })
                       }
-                      className="ui-input"
                     />
                   )}
                   <input
@@ -1791,7 +2053,7 @@ export default function InventarioPage() {
                         expiryDisplay: e.target.value,
                       })
                     }
-                    placeholder="Etiqueta ej. Nov-26"
+                    placeholder="Etiqueta automática (ej. Nov-26)"
                     className="ui-input"
                   />
                 </div>
@@ -1840,26 +2102,7 @@ export default function InventarioPage() {
                   className="ui-textarea mt-1"
                 />
               </div>
-
-              <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setEditingLot(null)}
-                  disabled={submittingEdit}
-                  className="ui-btn ui-btn-secondary"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={submittingEdit}
-                  className="ui-btn ui-btn-primary"
-                >
-                  {submittingEdit ? "Guardando..." : "Guardar Cambios"}
-                </button>
-              </div>
-            </form>
-          </>
+          </form>
         )}
       </Modal>
 
@@ -1873,45 +2116,41 @@ export default function InventarioPage() {
         }
         maxWidthClass="max-w-md"
         closeDisabled={deletingBusy}
+        error={errorMsg}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setDeletingLot(null)}
+              disabled={deletingBusy}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDeleteLot}
+              disabled={deletingBusy}
+              className="ui-btn ui-btn-danger"
+            >
+              {deletingBusy ? "Eliminando..." : "Eliminar lote"}
+            </button>
+          </div>
+        }
       >
         {deletingLot && (
-          <>
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              ¿Eliminar el lote{" "}
-              <strong className="font-mono text-slate-900 dark:text-slate-100">
-                {deletingLot.lotNumber}
-              </strong>{" "}
-              de{" "}
-              <strong className="text-slate-900 dark:text-slate-100">
-                {deletingLot.product.name}
-              </strong>{" "}
-              ({deletingLot.quantityText})? Esta acción también eliminará sus
-              alertas y averías vinculadas.
-            </p>
-            {errorMsg && (
-              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300">
-                {errorMsg}
-              </div>
-            )}
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDeletingLot(null)}
-                disabled={deletingBusy}
-                className="ui-btn ui-btn-secondary"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDeleteLot}
-                disabled={deletingBusy}
-                className="ui-btn ui-btn-danger"
-              >
-                {deletingBusy ? "Eliminando..." : "Eliminar lote"}
-              </button>
-            </div>
-          </>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            ¿Eliminar el lote{" "}
+            <strong className="font-mono text-slate-900 dark:text-slate-100">
+              {deletingLot.lotNumber}
+            </strong>{" "}
+            de{" "}
+            <strong className="text-slate-900 dark:text-slate-100">
+              {deletingLot.product.name}
+            </strong>{" "}
+            ({deletingLot.quantityText})? Esta acción también eliminará sus
+            alertas y averías vinculadas.
+          </p>
         )}
       </Modal>
 
@@ -2118,39 +2357,39 @@ export default function InventarioPage() {
         }
         maxWidthClass="max-w-md"
         closeDisabled={deletingProductBusy}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setDeletingProduct(null)}
+              disabled={deletingProductBusy}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDeleteProduct}
+              disabled={deletingProductBusy}
+              className="ui-btn ui-btn-danger"
+            >
+              {deletingProductBusy ? "Eliminando..." : "Eliminar producto"}
+            </button>
+          </div>
+        }
       >
         {deletingProduct && (
-          <>
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              ¿Eliminar el producto{" "}
-              <strong className="font-mono text-slate-900 dark:text-slate-100">
-                {deletingProduct.sku}
-              </strong>{" "}
-              —{" "}
-              <strong className="text-slate-900 dark:text-slate-100">
-                {deletingProduct.name}
-              </strong>
-              ? Solo se permitirá si no tiene lotes ni averías asociadas.
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDeletingProduct(null)}
-                disabled={deletingProductBusy}
-                className="ui-btn ui-btn-secondary"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDeleteProduct}
-                disabled={deletingProductBusy}
-                className="ui-btn ui-btn-danger"
-              >
-                {deletingProductBusy ? "Eliminando..." : "Eliminar producto"}
-              </button>
-            </div>
-          </>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            ¿Eliminar el producto{" "}
+            <strong className="font-mono text-slate-900 dark:text-slate-100">
+              {deletingProduct.sku}
+            </strong>{" "}
+            —{" "}
+            <strong className="text-slate-900 dark:text-slate-100">
+              {deletingProduct.name}
+            </strong>
+            ? Solo se permitirá si no tiene lotes ni averías asociadas.
+          </p>
         )}
       </Modal>
     </div>

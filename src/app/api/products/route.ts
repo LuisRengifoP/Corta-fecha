@@ -12,12 +12,16 @@ export async function GET(req: NextRequest) {
       ...(search
         ? {
             OR: [
-              { name: { contains: search } },
-              { sku: { contains: search } },
-              { category: { contains: search } },
-              { barcode: { contains: search } },
-              { brand: { contains: search } },
-              { supplier: { name: { contains: search } } },
+              { name: { contains: search, mode: "insensitive" as const } },
+              { sku: { contains: search, mode: "insensitive" as const } },
+              { category: { contains: search, mode: "insensitive" as const } },
+              { barcode: { contains: search, mode: "insensitive" as const } },
+              { brand: { contains: search, mode: "insensitive" as const } },
+              {
+                supplier: {
+                  name: { contains: search, mode: "insensitive" as const },
+                },
+              },
             ],
           }
         : {}),
@@ -61,29 +65,51 @@ export async function POST(req: NextRequest) {
       : null;
 
     if (!supplierId && supplierName) {
-      const supplierRecord = await prisma.supplier.upsert({
-        where: { name: supplierName },
-        update: {},
-        create: { name: supplierName },
+      const existingSupplier = await prisma.supplier.findFirst({
+        where: { name: { equals: supplierName, mode: "insensitive" } },
       });
-      supplierId = supplierRecord.id;
+      if (existingSupplier) {
+        supplierId = existingSupplier.id;
+      } else {
+        const supplierRecord = await prisma.supplier.create({
+          data: { name: supplierName },
+        });
+        supplierId = supplierRecord.id;
+      }
     }
 
-    const unitsPerBox = Math.max(1, Math.floor(Number(body.unitsPerBox ?? 1)));
+    const rawBoxes = Number(body.unitsPerBox ?? 1);
+    const unitsPerBox = Number.isFinite(rawBoxes)
+      ? Math.max(1, Math.floor(rawBoxes))
+      : 1;
     const unitsPerPack = parseOptionalPositiveInt(body.unitsPerPack);
     const unitsPerDispack = parseOptionalPositiveInt(body.unitsPerDispack);
     const unitsPerDisplay = parseOptionalPositiveInt(body.unitsPerDisplay);
     const unitsPerBag = parseOptionalPositiveInt(body.unitsPerBag);
-    const unitCost = Math.max(0, Number(body.unitCost ?? 0));
-    const alertThresholdDays = Math.max(
-      1,
-      Math.floor(Number(body.alertThresholdDays ?? 60))
-    );
+    const rawCost = Number(body.unitCost ?? 0);
+    const unitCost = Number.isFinite(rawCost) ? Math.max(0, rawCost) : 0;
+    const rawThreshold = Number(body.alertThresholdDays ?? 60);
+    const alertThresholdDays = Number.isFinite(rawThreshold)
+      ? Math.max(1, Math.floor(rawThreshold))
+      : 60;
 
     if (!sku || !name) {
       return NextResponse.json(
         { error: "Código (SKU) y nombre del producto son obligatorios" },
         { status: 400 }
+      );
+    }
+
+    const existingSku = await prisma.product.findUnique({
+      where: { sku },
+      select: { id: true, name: true },
+    });
+    if (existingSku) {
+      return NextResponse.json(
+        {
+          error: `El código SKU "${sku}" ya está registrado (${existingSku.name}).`,
+        },
+        { status: 409 }
       );
     }
 

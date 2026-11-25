@@ -112,7 +112,7 @@ export default function DashboardPage() {
         "dashboard:summary",
         async () => {
           const res = await fetch("/api/dashboard");
-          if (!res.ok) return null;
+          if (!res.ok) throw new Error("No se pudo cargar el dashboard");
           return res.json();
         },
         { force, ttlMs: 15_000 }
@@ -120,6 +120,8 @@ export default function DashboardPage() {
       if (json) {
         setData(json);
       }
+    } catch {
+      // Mantiene el estado anterior si ya había datos cacheados
     } finally {
       setLoading(false);
     }
@@ -152,12 +154,19 @@ export default function DashboardPage() {
         invalidateCache("inventory:");
         await Promise.all([fetchDashboard(true), refreshAlertsCount()]);
       } else {
+        const errJson = await res.json().catch(() => ({}));
         notify({
           title: "No se pudo ejecutar el análisis",
-          description: "Inténtalo nuevamente en unos segundos.",
+          description: errJson.error || "Inténtalo nuevamente en unos segundos.",
           variant: "error",
         });
       }
+    } catch {
+      notify({
+        title: "Error de conexión",
+        description: "No se pudo conectar con el servidor para ejecutar el análisis.",
+        variant: "error",
+      });
     } finally {
       setSyncing(false);
     }
@@ -265,7 +274,7 @@ export default function DashboardPage() {
       {/* KPIs principales */}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-5">
         <Link
-          href="/inventario?expiryWindow=15"
+          href="/inventario?expiryWindow=critical"
           className="ui-card-interactive group flex flex-col justify-between border-l-4 border-l-red-500 p-3.5 sm:p-4"
         >
           <div>
@@ -326,7 +335,7 @@ export default function DashboardPage() {
                 <Boxes className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </span>
             </div>
-            <p className="tabular-nums mt-2 text-2xl font-bold text-slate-900 dark:text-slate-100 sm:text-3xl">
+            <p className="tabular-nums mt-2 text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl xl:text-3xl">
               {kpis.totalUnits.toLocaleString("es-CO")}
             </p>
           </div>
@@ -569,20 +578,20 @@ export default function DashboardPage() {
               Ordenados por fecha de vencimiento más próxima (criterio FEFO).
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
             <a
               href="/api/reports/export?type=expiring&days=30"
-              className="ui-btn ui-btn-emerald-soft py-1.5 text-xs"
+              className="ui-btn ui-btn-emerald-soft py-2 text-xs sm:py-1.5"
             >
-              <FileSpreadsheet className="h-4 w-4" />
-              Excel próximos ≤30d
+              <FileSpreadsheet className="h-4 w-4 shrink-0" />
+              <span className="truncate">Excel próximos ≤30d</span>
             </a>
             <a
               href="/api/reports/export?type=expiring&days=30&format=pdf"
-              className="ui-btn ui-btn-rose-soft py-1.5 text-xs"
+              className="ui-btn ui-btn-rose-soft py-2 text-xs sm:py-1.5"
             >
-              <FileText className="h-4 w-4" />
-              PDF próximos ≤30d
+              <FileText className="h-4 w-4 shrink-0" />
+              <span className="truncate">PDF próximos ≤30d</span>
             </a>
           </div>
         </div>
@@ -825,7 +834,7 @@ export default function DashboardPage() {
                 className="flex items-start justify-between gap-3 py-2.5 first:pt-0 last:pb-0"
               >
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-slate-900 dark:text-slate-100">
+                  <p className="break-words text-xs font-medium text-slate-900 dark:text-slate-100">
                     {act.summary}
                   </p>
                   <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">

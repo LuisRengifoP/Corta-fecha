@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ClipboardCheck,
@@ -76,6 +76,7 @@ export default function InspeccionesPage() {
   const [deletingInspection, setDeletingInspection] =
     useState<InspectionItem | null>(null);
   const [deletingBusy, setDeletingBusy] = useState(false);
+  const handledLotParamRef = useRef(false);
 
   const [form, setForm] = useState({
     warehouseId: warehouses[0]?.id ?? "",
@@ -83,13 +84,18 @@ export default function InspeccionesPage() {
     inspectorName: user?.fullName ?? "",
     inspectionType: "PROGRAMADA",
     status: "APROBADA",
-    checkedBoxes: 0,
-    checkedUnits: 0,
+    checkedBoxes: "0",
+    checkedUnits: "0",
     expiryVerified: true,
     syncStockFromInspection: false,
     findings: "",
     correctiveAction: "",
   });
+
+  const toNonNegInt = (val: string | number): number => {
+    const n = Number(val);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  };
 
   useEffect(() => {
     if (user?.fullName) {
@@ -115,7 +121,7 @@ export default function InspeccionesPage() {
             cacheKey,
             async () => {
               const res = await fetch(`/api/inspections?${q.toString()}`);
-              if (!res.ok) return [];
+              if (!res.ok) throw new Error("No se pudieron cargar inspecciones");
               return (await res.json()).inspections ?? [];
             },
             { force, ttlMs: 15_000 }
@@ -124,7 +130,7 @@ export default function InspeccionesPage() {
             "ref:warehouses",
             async () => {
               const res = await fetch("/api/warehouses");
-              if (!res.ok) return [];
+              if (!res.ok) throw new Error("No se pudieron cargar bodegas");
               return (await res.json()).warehouses ?? [];
             },
             { force: false, ttlMs: 120_000 }
@@ -133,7 +139,7 @@ export default function InspeccionesPage() {
             "inventory:all",
             async () => {
               const res = await fetch("/api/inventory");
-              if (!res.ok) return [];
+              if (!res.ok) throw new Error("No se pudieron cargar lotes");
               return (await res.json()).lots ?? [];
             },
             { force, ttlMs: 20_000 }
@@ -149,6 +155,8 @@ export default function InspeccionesPage() {
             warehouseId: prev.warehouseId || whList[0].id,
           }));
         }
+      } catch {
+        // Mantener datos previos en caso de error transitorio
       } finally {
         setLoading(false);
       }
@@ -161,16 +169,18 @@ export default function InspeccionesPage() {
   }, [loadData]);
 
   useEffect(() => {
+    if (handledLotParamRef.current || lots.length === 0) return;
     const lotIdParam = new URLSearchParams(window.location.search).get("lotId");
-    if (lotIdParam && lots.length > 0) {
+    if (lotIdParam) {
+      handledLotParamRef.current = true;
       const target = lots.find((l) => l.id === lotIdParam);
       if (target) {
         setForm((prev) => ({
           ...prev,
           warehouseId: target.warehouseId,
           lotId: target.id,
-          checkedBoxes: target.boxes,
-          checkedUnits: target.looseUnits,
+          checkedBoxes: String(target.boxes),
+          checkedUnits: String(target.looseUnits),
         }));
         setShowModal(true);
       }
@@ -183,14 +193,23 @@ export default function InspeccionesPage() {
       ...prev,
       lotId,
       warehouseId: target ? target.warehouseId : prev.warehouseId,
-      checkedBoxes: target ? target.boxes : prev.checkedBoxes,
-      checkedUnits: target ? target.looseUnits : prev.checkedUnits,
+      checkedBoxes: target ? String(target.boxes) : prev.checkedBoxes,
+      checkedUnits: target ? String(target.looseUnits) : prev.checkedUnits,
     }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    const resolvedWarehouseId = form.warehouseId || warehouses[0]?.id || "";
+    if (!form.inspectorName.trim()) {
+      setErrorMsg("Ingresa el nombre del inspector responsable.");
+      return;
+    }
+    if (!form.findings.trim()) {
+      setErrorMsg("Describe los hallazgos de la inspección.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch("/api/inspections", {
@@ -198,12 +217,17 @@ export default function InspeccionesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
+          warehouseId: resolvedWarehouseId,
+          checkedBoxes: toNonNegInt(form.checkedBoxes),
+          checkedUnits: toNonNegInt(form.checkedUnits),
           lotId: form.lotId || null,
         }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setErrorMsg(json.error || "No se pudo registrar la inspección");
+        const msg = json.error || "No se pudo registrar la inspección";
+        setErrorMsg(msg);
+        notify({ title: "No se pudo guardar", description: msg, variant: "error" });
         return;
       }
       const synced = form.syncStockFromInspection && Boolean(form.lotId);
@@ -215,8 +239,8 @@ export default function InspeccionesPage() {
         inspectorName: operatorName,
         inspectionType: "PROGRAMADA",
         status: "APROBADA",
-        checkedBoxes: 0,
-        checkedUnits: 0,
+        checkedBoxes: "0",
+        checkedUnits: "0",
         expiryVerified: true,
         syncStockFromInspection: false,
         findings: "",
@@ -234,6 +258,10 @@ export default function InspeccionesPage() {
       invalidateCache("dashboard:");
       invalidateCache("alerts:");
       await Promise.all([loadData(true), refreshAlertsCount()]);
+    } catch {
+      const msg = "Error de conexión al guardar la inspección.";
+      setErrorMsg(msg);
+      notify({ title: "Error de conexión", description: msg, variant: "error" });
     } finally {
       setSubmitting(false);
     }
@@ -252,7 +280,9 @@ export default function InspeccionesPage() {
       );
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        setErrorMsg(json.error || "No se pudo eliminar la inspección");
+        const msg = json.error || "No se pudo eliminar la inspección";
+        setErrorMsg(msg);
+        notify({ title: "Error al eliminar", description: msg, variant: "error" });
       } else {
         setDeletingInspection(null);
         notify({
@@ -263,6 +293,10 @@ export default function InspeccionesPage() {
         invalidateCache("dashboard:");
         await loadData(true);
       }
+    } catch {
+      const msg = "Error de conexión al eliminar la inspección.";
+      setErrorMsg(msg);
+      notify({ title: "Error de conexión", description: msg, variant: "error" });
     } finally {
       setDeletingBusy(false);
     }
@@ -543,13 +577,29 @@ export default function InspeccionesPage() {
         }
         maxWidthClass="max-w-lg"
         closeDisabled={submitting}
-      >
-        {errorMsg && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300">
-            {errorMsg}
+        error={errorMsg}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setShowModal(false)}
+              disabled={submitting}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="inspection-form"
+              disabled={submitting}
+              className="ui-btn ui-btn-primary"
+            >
+              {submitting ? "Guardando..." : "Guardar Inspección"}
+            </button>
           </div>
-        )}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        }
+      >
+        <form id="inspection-form" noValidate onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
@@ -632,8 +682,8 @@ export default function InspeccionesPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="col-span-2 sm:col-span-1">
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 Resultado *
               </label>
@@ -653,12 +703,14 @@ export default function InspeccionesPage() {
               </label>
               <input
                 type="number"
+                inputMode="numeric"
                 min={0}
+                placeholder="0"
                 value={form.checkedBoxes}
                 onChange={(e) =>
                   setForm({
                     ...form,
-                    checkedBoxes: Number(e.target.value),
+                    checkedBoxes: e.target.value,
                   })
                 }
                 className="ui-input mt-1"
@@ -670,12 +722,14 @@ export default function InspeccionesPage() {
               </label>
               <input
                 type="number"
+                inputMode="numeric"
                 min={0}
+                placeholder="0"
                 value={form.checkedUnits}
                 onChange={(e) =>
                   setForm({
                     ...form,
-                    checkedUnits: Number(e.target.value),
+                    checkedUnits: e.target.value,
                   })
                 }
                 className="ui-input mt-1"
@@ -738,24 +792,6 @@ export default function InspeccionesPage() {
               className="ui-input mt-1"
             />
           </div>
-
-          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={() => setShowModal(false)}
-              disabled={submitting}
-              className="ui-btn ui-btn-secondary"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="ui-btn ui-btn-primary"
-            >
-              {submitting ? "Guardando..." : "Guardar Inspección"}
-            </button>
-          </div>
         </form>
       </Modal>
 
@@ -769,44 +805,40 @@ export default function InspeccionesPage() {
         }
         maxWidthClass="max-w-md"
         closeDisabled={deletingBusy}
+        error={errorMsg}
+        footer={
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setDeletingInspection(null)}
+              disabled={deletingBusy}
+              className="ui-btn ui-btn-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDelete}
+              disabled={deletingBusy}
+              className="ui-btn ui-btn-danger"
+            >
+              {deletingBusy ? "Eliminando..." : "Eliminar inspección"}
+            </button>
+          </div>
+        }
       >
         {deletingInspection && (
-          <>
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              ¿Eliminar la inspección realizada por{" "}
-              <strong className="text-slate-900 dark:text-slate-100">
-                {deletingInspection.inspectorName}
-              </strong>{" "}
-              el {formatDateTimeES(deletingInspection.inspectedAt)}
-              {deletingInspection.lot
-                ? ` sobre el lote ${deletingInspection.lot.lotNumber} (${deletingInspection.lot.product.name})`
-                : " (inspección general)"}
-              ?
-            </p>
-            {errorMsg && (
-              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300">
-                {errorMsg}
-              </div>
-            )}
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDeletingInspection(null)}
-                disabled={deletingBusy}
-                className="ui-btn ui-btn-secondary"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                disabled={deletingBusy}
-                className="ui-btn ui-btn-danger"
-              >
-                {deletingBusy ? "Eliminando..." : "Eliminar inspección"}
-              </button>
-            </div>
-          </>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            ¿Eliminar la inspección realizada por{" "}
+            <strong className="text-slate-900 dark:text-slate-100">
+              {deletingInspection.inspectorName}
+            </strong>{" "}
+            el {formatDateTimeES(deletingInspection.inspectedAt)}
+            {deletingInspection.lot
+              ? ` sobre el lote ${deletingInspection.lot.lotNumber} (${deletingInspection.lot.product.name})`
+              : " (inspección general)"}
+            ?
+          </p>
         )}
       </Modal>
     </div>

@@ -11,6 +11,8 @@ interface ModalProps {
   icon?: React.ReactNode;
   maxWidthClass?: string;
   closeDisabled?: boolean;
+  error?: string | null;
+  footer?: React.ReactNode;
   children: React.ReactNode;
 }
 
@@ -22,6 +24,8 @@ export function Modal({
   icon,
   maxWidthClass = "max-w-lg",
   closeDisabled = false,
+  error,
+  footer,
   children,
 }: ModalProps) {
   useEffect(() => {
@@ -80,9 +84,24 @@ export function Modal({
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="pb-safe flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+        <div
+          className={`${footer ? "" : "pb-safe "}flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5`}
+        >
           {children}
         </div>
+        {(error || footer) && (
+          <div className="pb-safe shrink-0 border-t border-slate-200 bg-slate-50/80 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/70 sm:px-6 sm:py-4">
+            {error && (
+              <div
+                role="alert"
+                className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-medium text-red-700 dark:border-red-900/70 dark:bg-red-950/60 dark:text-red-300"
+              >
+                {error}
+              </div>
+            )}
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );

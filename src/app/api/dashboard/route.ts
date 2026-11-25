@@ -21,7 +21,7 @@ export async function GET() {
       }),
       prisma.alert.findMany({
         where: { acknowledged: false },
-        orderBy: [{ severity: "asc" }, { createdAt: "desc" }],
+        orderBy: [{ createdAt: "desc" }],
         include: {
           lot: { include: { product: true, warehouse: true } },
         },
@@ -138,6 +138,16 @@ export async function GET() {
       };
     });
 
+    const severityOrder: Record<string, number> = { ALTA: 0, MEDIA: 1, BAJA: 2 };
+    const sortedAlerts = [...alerts].sort((a, b) => {
+      const sDiff =
+        (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9);
+      if (sDiff !== 0) return sDiff;
+      const dDiff = (a.daysToExpiry ?? 9999) - (b.daysToExpiry ?? 9999);
+      if (dDiff !== 0) return dDiff;
+      return b.createdAt.getTime() - a.createdAt.getTime();
+    });
+
     return NextResponse.json({
       kpis: {
         totalActiveLots: activeLots.length,
@@ -165,7 +175,7 @@ export async function GET() {
       categoryBreakdown: Array.from(categoryMap.values()),
       warehouseSummary,
       urgentLots: enrichedUrgentLots.slice(0, 12),
-      activeAlerts: alerts.slice(0, 8),
+      activeAlerts: sortedAlerts.slice(0, 8),
       recentInspections: inspections.slice(0, 5),
       recentActivity,
     });
