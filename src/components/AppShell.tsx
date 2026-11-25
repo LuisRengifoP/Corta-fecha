@@ -598,7 +598,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        <main className="cf-animate-fade mx-auto w-full max-w-7xl flex-1 p-3.5 pb-24 sm:p-6 sm:pb-24 lg:p-8 lg:pb-12">
+        <main className="mx-auto w-full max-w-7xl flex-1 p-3.5 pb-24 sm:p-6 sm:pb-24 lg:p-8 lg:pb-12">
           {children}
         </main>
 

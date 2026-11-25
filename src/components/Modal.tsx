@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 interface ModalProps {
@@ -28,6 +29,12 @@ export function Modal({
   footer,
   children,
 }: ModalProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     const prevOverflow = document.body.style.overflow;
@@ -44,11 +51,11 @@ export function Modal({
     };
   }, [open, closeDisabled, onClose]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
-  return (
+  return createPortal(
     <div
-      className="cf-animate-fade fixed inset-0 z-50 flex items-end justify-center bg-slate-900/55 p-0 backdrop-blur-[2px] dark:bg-black/75 sm:items-center sm:p-4"
+      className="cf-animate-fade fixed inset-0 z-[60] flex items-end justify-center bg-slate-900/55 p-0 backdrop-blur-[2px] dark:bg-black/75 sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       onClick={() => {
@@ -56,7 +63,7 @@ export function Modal({
       }}
     >
       <div
-        className={`cf-animate-modal-responsive flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-b-0 border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:max-h-[90vh] sm:rounded-2xl sm:border-b ${maxWidthClass}`}
+        className={`cf-animate-modal-responsive flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-b-0 border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:max-h-[90vh] sm:rounded-2xl sm:border-b ${maxWidthClass}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-slate-300 dark:bg-slate-700 sm:hidden" />
@@ -103,6 +110,7 @@ export function Modal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
