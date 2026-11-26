@@ -1,3 +1,7 @@
+
+<img width="501" height="544" alt="image" src="https://github.com/user-attachments/assets/3d7776f6-c531-46ac-9596-e1a9ea38d123" />
+
+
 # Sistema Corta Fecha — Control de Productos Próximos a Vencer y Averiados
 
 Plataforma web full-stack desarrollada en **TypeScript (Next.js App Router + API Routes + Prisma ORM + SQLite/PostgreSQL)** para automatizar la identificación, control y seguimiento de productos próximos a vencer y averiados dentro de las bodegas de la empresa.
