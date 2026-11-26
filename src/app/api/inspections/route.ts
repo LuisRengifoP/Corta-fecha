@@ -1,11 +1,11 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   computeDaysToExpiry,
   computeLotStockMetrics,
   deriveLotStatus,
-  dispatchPendingExpiryNotifications,
   logActivity,
+  schedulePendingExpiryNotifications,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
 
@@ -167,11 +167,7 @@ export async function POST(req: NextRequest) {
         sendWhatsApp: false,
         sendTelegram: false,
       });
-      after(() => {
-        void dispatchPendingExpiryNotifications(inspectorName).catch((err) =>
-          console.error("Error enviando notificaciones en segundo plano:", err)
-        );
-      });
+      schedulePendingExpiryNotifications(inspectorName);
     }
 
     return NextResponse.json({ inspection }, { status: 201 });

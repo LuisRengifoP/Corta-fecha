@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { prisma } from "./prisma";
 import {
   buildQuantityText,
@@ -343,6 +344,18 @@ export async function dispatchPendingExpiryNotifications(
   }
 
   return { whatsappResult, telegramResult };
+}
+
+export function schedulePendingExpiryNotifications(
+  actor = "Motor Automático"
+) {
+  after(async () => {
+    try {
+      await dispatchPendingExpiryNotifications(actor);
+    } catch (err) {
+      console.error("Error enviando notificaciones en segundo plano:", err);
+    }
+  });
 }
 
 /**

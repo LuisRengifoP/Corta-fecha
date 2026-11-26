@@ -80,62 +80,69 @@ export function buildTelegramAlertsHtml(
     ? "RESUMEN CORTA FECHA — DISTRIMARCAS"
     : "ALERTA CORTA FECHA — DISTRIMARCAS";
 
-  const maxLines = 20;
-  const shown = sorted.slice(0, maxLines);
-
-  const itemLines = shown.map((item, index) => {
-    const tag = escapeHtml(getUrgencyTag(item.daysToExpiry));
-    const productName = escapeHtml(item.lot?.product.name ?? item.title);
-    const sku = escapeHtml(item.lot?.product.sku ?? "—");
-    const lotNumber = escapeHtml(item.lot?.lotNumber ?? "—");
-    const warehouse = escapeHtml(item.lot?.warehouse.name ?? "Bodega");
-    const expiryText = escapeHtml(
-      item.lot
-        ? item.lot.expiryDisplay || formatDateES(item.lot.expiryDate)
-        : "—"
-    );
-    const stockText = escapeHtml(
-      item.lot
-        ? item.lot.totalUnits > 0
-          ? `${item.lot.quantityText} (${item.lot.totalUnits} u.)`
-          : item.lot.quantityText
-        : "—"
-    );
-    const typeLabel = escapeHtml(ALERT_TYPE_LABELS[item.type] ?? item.type);
-
-    return [
-      `${index + 1}. <b>[${tag}]</b> ${productName}`,
-      `   SKU: <code>${sku}</code> | Lote: <code>${lotNumber}</code> | ${typeLabel}`,
-      `   Vence: <b>${expiryText}</b> | Stock: ${stockText} (${warehouse})`,
-    ].join("\n");
-  });
-
-  const extraLine =
-    sorted.length > maxLines
-      ? `\n<i>...y ${sorted.length - maxLines} lote(s) adicional(es) en el sistema.</i>`
-      : "";
-
   const actor = escapeHtml(options?.actor || "Sistema Corta Fecha");
   const generatedAt = escapeHtml(new Date().toLocaleString("es-CO"));
 
-  const fullText = [
-    `<b>${escapeHtml(headerTitle)}</b>`,
-    `Lotes con novedad de vencimiento (&lt;= 60 días): <b>${sorted.length}</b>`,
-    `Vencidos: <b>${expiredCount}</b> | Críticos (0-15d): <b>${criticalCount}</b> | Próximos (16-60d): <b>${upcomingCount}</b>`,
-    "",
-    ...itemLines,
-    extraLine,
-    "",
-    `Generado: ${generatedAt} (${actor})`,
-  ]
-    .filter((line, i, arr) => !(line === "" && arr[i - 1] === ""))
-    .join("\n");
+  const buildMessage = (limit: number) => {
+    const shown = sorted.slice(0, limit);
+    const lines = shown.map((item, index) => {
+      const tag = escapeHtml(getUrgencyTag(item.daysToExpiry));
+      const productName = escapeHtml(item.lot?.product.name ?? item.title);
+      const sku = escapeHtml(item.lot?.product.sku ?? "—");
+      const lotNumber = escapeHtml(item.lot?.lotNumber ?? "—");
+      const warehouse = escapeHtml(item.lot?.warehouse.name ?? "Bodega");
+      const expiryText = escapeHtml(
+        item.lot
+          ? item.lot.expiryDisplay || formatDateES(item.lot.expiryDate)
+          : "—"
+      );
+      const stockText = escapeHtml(
+        item.lot
+          ? item.lot.totalUnits > 0
+            ? `${item.lot.quantityText} (${item.lot.totalUnits} u.)`
+            : item.lot.quantityText
+          : "—"
+      );
+      const typeLabel = escapeHtml(ALERT_TYPE_LABELS[item.type] ?? item.type);
+
+      return [
+        `${index + 1}. <b>[${tag}]</b> ${productName}`,
+        `   SKU: <code>${sku}</code> | Lote: <code>${lotNumber}</code> | ${typeLabel}`,
+        `   Vence: <b>${expiryText}</b> | Stock: ${stockText} (${warehouse})`,
+      ].join("\n");
+    });
+
+    const extraLine =
+      sorted.length > limit
+        ? `\n<i>...y ${sorted.length - limit} lote(s) adicional(es) en el sistema.</i>`
+        : "";
+
+    return [
+      `<b>${escapeHtml(headerTitle)}</b>`,
+      `Lotes con novedad de vencimiento (&lt;= 60 días): <b>${sorted.length}</b>`,
+      `Vencidos: <b>${expiredCount}</b> | Críticos (0-15d): <b>${criticalCount}</b> | Próximos (16-60d): <b>${upcomingCount}</b>`,
+      "",
+      ...lines,
+      extraLine,
+      "",
+      `Generado: ${generatedAt} (${actor})`,
+    ]
+      .filter((line, i, arr) => !(line === "" && arr[i - 1] === ""))
+      .join("\n");
+  };
+
+  let limit = Math.min(20, sorted.length);
+  let fullText = buildMessage(limit);
+  while (fullText.length > 4096 && limit > 1) {
+    limit--;
+    fullText = buildMessage(limit);
+  }
 
   if (fullText.length <= 4096) {
     return fullText;
   }
 
-  return `${fullText.slice(0, 4050)}\n<i>...mensaje truncado por límite de Telegram.</i>`;
+  return `${buildMessage(0).slice(0, 4050)}`;
 }
 
 export async function sendExpirationAlertsTelegram(

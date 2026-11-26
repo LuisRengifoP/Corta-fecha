@@ -1,11 +1,11 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   computeDaysToExpiry,
   computeLotStockMetrics,
   deriveLotStatus,
-  dispatchPendingExpiryNotifications,
   logActivity,
+  schedulePendingExpiryNotifications,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
 import { parseFlexibleExpiryInput, sanitizeCounts } from "@/lib/packaging";
@@ -140,11 +140,7 @@ export async function PATCH(
       sendWhatsApp: false,
       sendTelegram: false,
     });
-    after(() => {
-      void dispatchPendingExpiryNotifications(actor).catch((err) =>
-        console.error("Error enviando notificaciones en segundo plano:", err)
-      );
-    });
+    schedulePendingExpiryNotifications(actor);
 
     return NextResponse.json({
       lot: { ...updated, daysToExpiry },
