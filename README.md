@@ -1,5 +1,5 @@
 
-<img width="501" height="544" alt="image" src="https://github.com/user-attachments/assets/3d7776f6-c531-46ac-9596-e1a9ea38d123" />
+   <img width="501" height="544" alt="image" src="https://github.com/user-attachments/assets/3d7776f6-c531-46ac-9596-e1a9ea38d123" />
 
 
 # Sistema Corta Fecha — Control de Productos Próximos a Vencer y Averiados
