@@ -5,7 +5,6 @@ import {
   computeLotStockMetrics,
   deriveLotStatus,
   logActivity,
-  schedulePendingExpiryNotifications,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
 import { buildQuantityText } from "@/lib/packaging";
@@ -149,11 +148,9 @@ export async function DELETE(
     });
 
     if (shouldRestoreStock) {
-      await syncAlertsAndStatuses(actor, {
-        sendWhatsApp: false,
-        sendTelegram: false,
-      });
-      schedulePendingExpiryNotifications(actor);
+      await syncAlertsAndStatuses(actor).catch((err) =>
+        console.error("Error sincronizando y enviando alertas por Telegram:", err)
+      );
     }
 
     return NextResponse.json({

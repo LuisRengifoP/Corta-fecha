@@ -197,7 +197,7 @@ export default function LoginPage() {
                     <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
                     <span>
                       Semáforo FEFO de vencimientos, alertas automáticas y envío a
-                      WhatsApp.
+                      Telegram.
                     </span>
                   </li>
                   <li className="flex items-start gap-1.5">

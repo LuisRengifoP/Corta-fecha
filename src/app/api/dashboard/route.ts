@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { computeDaysToExpiry } from "@/lib/corta-fecha";
+import { computeDaysToExpiry, syncAlertsAndStatuses } from "@/lib/corta-fecha";
 import { hasAnyPackagingStock } from "@/lib/packaging";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    await syncAlertsAndStatuses("Detección Automática").catch((err) =>
+      console.error("Error en sincronización automática GET /api/dashboard:", err)
+    );
     const now = new Date();
     const [
       lots,

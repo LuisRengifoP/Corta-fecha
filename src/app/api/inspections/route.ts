@@ -5,7 +5,6 @@ import {
   computeLotStockMetrics,
   deriveLotStatus,
   logActivity,
-  schedulePendingExpiryNotifications,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
 
@@ -163,11 +162,9 @@ export async function POST(req: NextRequest) {
     });
 
     if (syncStockFromInspection) {
-      await syncAlertsAndStatuses(inspectorName, {
-        sendWhatsApp: false,
-        sendTelegram: false,
-      });
-      schedulePendingExpiryNotifications(inspectorName);
+      await syncAlertsAndStatuses(inspectorName).catch((err) =>
+        console.error("Error sincronizando y enviando alertas por Telegram:", err)
+      );
     }
 
     return NextResponse.json({ inspection }, { status: 201 });

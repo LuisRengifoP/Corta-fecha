@@ -1,7 +1,27 @@
 import { ALERT_TYPE_LABELS, formatDateES } from "./constants";
-import type { WhatsAppAlertItem } from "./whatsapp";
 
-export type TelegramAlertItem = WhatsAppAlertItem;
+export interface TelegramAlertItem {
+  id: string;
+  type: string;
+  severity: string;
+  title: string;
+  message: string;
+  daysToExpiry: number | null;
+  lot: {
+    lotNumber: string;
+    quantityText: string;
+    totalUnits: number;
+    expiryDate: Date;
+    expiryDisplay: string | null;
+    product: {
+      name: string;
+      sku: string;
+    };
+    warehouse: {
+      name: string;
+    };
+  } | null;
+}
 
 export interface TelegramConfigStatus {
   configured: boolean;

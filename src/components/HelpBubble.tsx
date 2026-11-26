@@ -16,9 +16,9 @@ import {
   History,
   KeyRound,
   LayoutDashboard,
-  MessageCircle,
   Package,
   Search,
+  Send,
   ShieldAlert,
   Sparkles,
   SunMoon,
@@ -80,21 +80,21 @@ const MODULE_GUIDES: ModuleGuide[] = [
   {
     id: "alertas",
     href: "/alertas",
-    title: "Alertas Automáticas y WhatsApp",
-    shortDesc: "Detección de vencimientos ≤30 días y envío a WhatsApp.",
+    title: "Alertas Automáticas y Telegram",
+    shortDesc: "Detección de vencimientos ≤60 días y envío automático a Telegram.",
     icon: Bell,
     badgeColor:
       "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/60 dark:text-red-300 dark:border-red-800/70",
     whatItDoes:
-      "Centraliza las alertas generadas automáticamente para lotes vencidos (severidad Alta), críticos ≤15 días (Alta) y preventivos 16–30 días (Media). Evita duplicados por lote y cierra alertas automáticamente cuando un lote se agota o entra en cuarentena.",
+      "Centraliza las alertas generadas automáticamente para lotes vencidos (severidad Alta), críticos ≤15 días (Alta) y preventivos ≤60 días (Media). Envía notificaciones automáticas por Telegram al detectar lotes próximos a vencer, evita duplicados y cierra alertas cuando un lote se agota o entra en cuarentena.",
     keyActions: [
-      "Ejecutar Escaneo Automático: recalcula estados y genera alertas nuevas; si hay API de WhatsApp configurada en .env, envía automáticamente las pendientes.",
-      "Enviar Resumen por WhatsApp: agrupa todos los lotes activos con ≤30 días y los envía por API o abre el asistente de WhatsApp Web para copiar el texto y enviarlo en 1 clic.",
-      "WhatsApp individual: envía una sola alerta puntual al número configurado (+57 312 638 7834 por defecto o el definido en ALERT_WHATSAPP_TO).",
+      "Envío automático por Telegram: al registrar/editar lotes o entrar al sistema, si hay alertas nuevas con ≤60 días sin notificar, se envían automáticamente al bot de Telegram configurado.",
+      "Ejecutar Escaneo Automático: recalcula estados, genera alertas nuevas y despacha por Telegram las que falten.",
+      "Enviar resumen por Telegram: envía manualmente un resumen consolidado de todos los lotes activos con ≤60 días.",
       "Marcar atendida / Reabrir: registra qué responsable gestionó la alerta con fecha y hora.",
       "Accesos directos: desde cada alerta puedes saltar directo a Inspeccionar o Reportar Avería sobre ese lote.",
     ],
-    tips: "Recuerda revisar tanto la pestaña 'Alertas Pendientes' como 'Atendidas / Históricas' para hacer seguimiento completo.",
+    tips: "Recuerda revisar tanto la pestaña 'Alertas Pendientes' como 'Atendidas' para hacer seguimiento completo.",
   },
   {
     id: "inspecciones",
@@ -142,7 +142,7 @@ const MODULE_GUIDES: ModuleGuide[] = [
     badgeColor:
       "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
     whatItDoes:
-      "Guarda automáticamente un registro cronológico de todas las operaciones realizadas: creación/edición/eliminación de productos y lotes, inspecciones, averías, alertas, envíos de WhatsApp y descargas de reportes.",
+      "Guarda automáticamente un registro cronológico de todas las operaciones realizadas: creación/edición/eliminación de productos y lotes, inspecciones, averías, alertas, envíos de Telegram y descargas de reportes.",
     keyActions: [
       "Buscador y filtro por módulo: encuentra rápidamente qué responsable realizó una acción o qué ocurrió con un SKU o lote.",
       "Exportar Auditoría (.xlsx): descarga el historial completo en Excel para control interno.",
@@ -240,7 +240,7 @@ const STATUS_GLOSSARY = [
     badge:
       "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800/70",
     meaning:
-      "Ventana preventiva estándar. Se incluye en alertas automáticas y resúmenes de WhatsApp.",
+      "Ventana preventiva estándar. Se incluye en alertas automáticas y notificaciones de Telegram.",
   },
   {
     label: "Vigente (> 30 días)",
@@ -279,8 +279,8 @@ const FAQ_ITEMS = [
     a: "Por integridad de datos, no es posible borrar un producto si aún tiene lotes de inventario o registros de averías asociados. Primero debes eliminar o depurar sus lotes/averías si fue un registro erróneo.",
   },
   {
-    q: "¿Cómo funciona el envío de alertas por WhatsApp?",
-    a: "El sistema evalúa los lotes activos con vencimiento ≤ 30 días. Si configuraste una API en el archivo .env (Meta Cloud API, CallMeBot, Twilio o Webhook), el envío es automático al escanear. Si no hay API configurada, al pulsar 'Enviar Resumen por WhatsApp' se abre una vista previa lista para copiar o abrir directamente en WhatsApp Web y marcar como enviado.",
+    q: "¿Cómo funciona el envío de alertas por Telegram?",
+    a: "El sistema evalúa los lotes activos con vencimiento ≤ 60 días. Cuando registras o actualizas un lote próximo a vencer (o al abrir el panel/alertas si hay novedades pendientes), el bot de Telegram envía automáticamente la notificación sin tener que pulsar ningún botón.",
   },
   {
     q: "¿Qué pasa con el stock cuando reporto o elimino una avería?",
@@ -444,7 +444,7 @@ export function HelpBubble() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Buscar duda, sigla o función (ej. whatsapp, paca, oscuro, pdf)..."
+                placeholder="Buscar duda, sigla o función (ej. telegram, paca, oscuro, pdf)..."
                 className="w-full rounded-xl border border-white/15 bg-white/10 py-2 pl-9 pr-8 text-xs text-white placeholder:text-slate-300 focus:border-indigo-400 focus:bg-white/15 focus:outline-none"
               />
               {query && (
@@ -501,7 +501,7 @@ export function HelpBubble() {
                 {searchResults.total === 0 && (
                   <div className="ui-card p-6 text-center text-xs text-slate-500 dark:text-slate-400">
                     No encontramos coincidencias exactas. Prueba palabras como{" "}
-                    <strong>lote</strong>, <strong>whatsapp</strong>,{" "}
+                    <strong>lote</strong>, <strong>telegram</strong>,{" "}
                     <strong>excel</strong>, <strong>oscuro</strong>,{" "}
                     <strong>cuarentena</strong> o <strong>paca</strong>.
                   </div>
@@ -625,7 +625,7 @@ export function HelpBubble() {
                     por lote y tipo de empaque (Cajas, Pacas, Dispacks, Displays,
                     Bolsas y Unidades), priorizar despachos bajo criterio{" "}
                     <strong>FEFO</strong> (Primero en Vencer, Primero en Salir),
-                    enviar alertas a WhatsApp y emitir las planillas oficiales en
+                    enviar alertas automáticas por Telegram y emitir las planillas oficiales en
                     Excel y PDF.
                   </p>
                   <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600 dark:bg-slate-800/70 dark:text-slate-300">
@@ -653,8 +653,8 @@ export function HelpBubble() {
                       },
                       {
                         step: "2",
-                        title: "Escanear y Notificar por WhatsApp",
-                        desc: "En Alertas Automáticas, ejecuta el escaneo y envía el resumen de lotes con ≤30 días al WhatsApp de supervisión.",
+                        title: "Revisar Alertas Automáticas en Telegram",
+                        desc: "El sistema detecta lotes con ≤60 días y envía el aviso automáticamente a Telegram; en Alertas puedes marcarlas como atendidas.",
                         href: "/alertas",
                       },
                       {
@@ -843,24 +843,24 @@ export function HelpBubble() {
 
                 <div className="ui-card p-4">
                   <div className="flex items-center gap-2">
-                    <MessageCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                    <Send className="h-4 w-4 text-sky-600 dark:text-sky-400" />
                     <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                      Reglas de Notificación por WhatsApp
+                      Reglas de Notificación Automática por Telegram
                     </h3>
                   </div>
                   <ul className="mt-2 space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
                     <li>
-                      • Solo notifica lotes activos (con existencias y fuera de
-                      cuarentena) cuyo vencimiento sea <strong>≤ 30 días</strong>.
+                      • Notifica lotes activos (con existencias y fuera de
+                      cuarentena) cuyo vencimiento sea <strong>≤ 60 días</strong>.
                     </li>
                     <li>
-                      • Soporta envío automático por API (Meta Cloud, CallMeBot,
-                      Twilio o Webhook en <code>.env</code>) o envío manual con 1
-                      clic por <strong>WhatsApp Web</strong>.
+                      • Se envía de forma <strong>automática</strong> al registrar
+                      o editar lotes, al abrir el sistema si hay novedades
+                      pendientes y en el escaneo diario programado.
                     </li>
                     <li>
                       • Marca cada alerta enviada para evitar duplicados en los
-                      escaneos automáticos.
+                      siguientes escaneos.
                     </li>
                   </ul>
                 </div>

@@ -5,7 +5,6 @@ import {
   computeLotStockMetrics,
   deriveLotStatus,
   logActivity,
-  schedulePendingExpiryNotifications,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
 import {
@@ -21,6 +20,12 @@ export async function GET(req: NextRequest) {
     const warehouseId = params.get("warehouseId") ?? "";
     const status = params.get("status") ?? "";
     const expiryWindow = params.get("expiryWindow") ?? "";
+
+    if (!search && !warehouseId && !status && !expiryWindow) {
+      await syncAlertsAndStatuses("Detección Automática").catch((err) =>
+        console.error("Error en sincronización automática GET /api/inventory:", err)
+      );
+    }
 
     const lots = await prisma.inventoryLot.findMany({
       where: {
@@ -221,11 +226,9 @@ export async function POST(req: NextRequest) {
       summary: `Lote ${lot.lotNumber} registrado (${lot.product.sku} — ${lot.product.name}): ${lot.quantityText} · Vence ${lot.expiryDisplay}`,
     });
 
-    await syncAlertsAndStatuses(actor, {
-      sendWhatsApp: false,
-      sendTelegram: false,
-    });
-    schedulePendingExpiryNotifications(actor);
+    await syncAlertsAndStatuses(actor).catch((err) =>
+      console.error("Error sincronizando y enviando alertas por Telegram:", err)
+    );
 
     return NextResponse.json(
       { lot: { ...lot, daysToExpiry } },

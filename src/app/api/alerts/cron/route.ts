@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   dispatchExpiryAlertTelegram,
-  dispatchExpiryAlertWhatsApp,
   logActivity,
   syncAlertsAndStatuses,
 } from "@/lib/corta-fecha";
@@ -25,18 +24,8 @@ async function handleCron(req: NextRequest) {
       : "Escaneo Programado";
 
     const syncResult = await syncAlertsAndStatuses(actor, {
-      sendWhatsApp: !sendDigest,
       sendTelegram: !sendDigest,
     });
-
-    const whatsappResult = sendDigest
-      ? await dispatchExpiryAlertWhatsApp({
-          actor,
-          onlyUnsent: false,
-          isDigest: true,
-          markAsSent: false,
-        })
-      : syncResult.whatsappResult;
 
     const telegramResult = sendDigest
       ? await dispatchExpiryAlertTelegram({
@@ -52,13 +41,12 @@ async function handleCron(req: NextRequest) {
       action: "CRON_ALERTAS",
       actor,
       summary: `Escaneo programado ejecutado: ${syncResult.scannedLots} lotes evaluados, ${syncResult.createdAlerts} alertas nuevas, ${syncResult.resolvedAlerts} cerradas.`,
-      details: { ...syncResult, whatsappResult, telegramResult },
+      details: { ...syncResult, telegramResult },
     });
 
     return NextResponse.json({
       ok: true,
       result: syncResult,
-      whatsappResult,
       telegramResult,
     });
   } catch (error) {

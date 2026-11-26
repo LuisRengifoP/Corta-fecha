@@ -54,7 +54,7 @@ const NAV_ITEMS = [
     href: "/alertas",
     label: "Alertas Automáticas",
     mobileLabel: "Alertas",
-    shortDesc: "Vencimientos ≤60d y envío Telegram/WhatsApp",
+    shortDesc: "Vencimientos ≤60d y envío automático a Telegram",
     icon: Bell,
     showBadge: true,
   },

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { logActivity, syncAlertsAndStatuses } from "@/lib/corta-fecha";
-import { getWhatsAppConfigStatus } from "@/lib/whatsapp";
 import { getTelegramConfigStatus } from "@/lib/telegram";
 
 export async function GET(req: NextRequest) {
@@ -20,6 +19,13 @@ export async function GET(req: NextRequest) {
       const count = await prisma.alert.count({ where });
       return NextResponse.json({ count });
     }
+
+    const autoSync = await syncAlertsAndStatuses("Detección Automática").catch(
+      (err) => {
+        console.error("Error en sincronización automática GET /api/alerts:", err);
+        return null;
+      }
+    );
 
     const rawAlerts = await prisma.alert.findMany({
       where,
@@ -44,17 +50,11 @@ export async function GET(req: NextRequest) {
       return b.createdAt.getTime() - a.createdAt.getTime();
     });
 
-    const whatsappCfg = getWhatsAppConfigStatus();
     const telegramCfg = getTelegramConfigStatus();
 
     return NextResponse.json({
       alerts,
-      whatsappConfig: {
-        configured: whatsappCfg.configured,
-        provider: whatsappCfg.provider,
-        recipient: whatsappCfg.recipient,
-        displayRecipient: whatsappCfg.displayRecipient,
-      },
+      autoTelegramResult: autoSync?.telegramResult ?? null,
       telegramConfig: {
         configured: telegramCfg.configured,
         chatIds: telegramCfg.chatIds,

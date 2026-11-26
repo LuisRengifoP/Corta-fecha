@@ -1,4 +1,3 @@
-import { after } from "next/server";
 import { prisma } from "./prisma";
 import {
   buildQuantityText,
@@ -7,11 +6,6 @@ import {
   PackagingCounts,
   ProductEquivalences,
 } from "./packaging";
-import {
-  getWhatsAppConfigStatus,
-  sendExpirationAlertsWhatsApp,
-  SendAlertWhatsAppResult,
-} from "./whatsapp";
 import {
   getTelegramConfigStatus,
   sendExpirationAlertsTelegram,
@@ -100,109 +94,11 @@ export async function logActivity(params: {
   });
 }
 
-export async function dispatchExpiryAlertWhatsApp(options?: {
-  actor?: string;
-  onlyUnsent?: boolean;
-  isDigest?: boolean;
-  markAsSent?: boolean;
-}): Promise<SendAlertWhatsAppResult> {
-  const actor = options?.actor?.trim() || "Motor Automático";
-  const onlyUnsent = options?.onlyUnsent ?? true;
-  const markAsSent = options?.markAsSent ?? true;
-  const cfg = getWhatsAppConfigStatus();
-
-  const alerts = await prisma.alert.findMany({
-    where: {
-      acknowledged: false,
-      type: {
-        in: [
-          "PRODUCTO_VENCIDO",
-          "VENCIMIENTO_CRITICO",
-          "VENCIMIENTO_PREVENTIVO",
-        ],
-      },
-      daysToExpiry: { lte: 60 },
-      ...(onlyUnsent ? { emailSentAt: null } : {}),
-    },
-    include: {
-      lot: {
-        include: {
-          product: true,
-          warehouse: true,
-        },
-      },
-    },
-    orderBy: [{ daysToExpiry: "asc" }, { createdAt: "desc" }],
-  });
-
-  if (alerts.length === 0) {
-    return {
-      sent: false,
-      skipped: true,
-      reason: onlyUnsent
-        ? "No hay alertas nuevas (≤ 60 días) pendientes de envío por WhatsApp."
-        : "No hay alertas activas con ≤ 60 días para enviar.",
-      recipient: cfg.recipient,
-      displayRecipient: cfg.displayRecipient,
-      count: 0,
-    };
-  }
-
-  try {
-    const result = await sendExpirationAlertsWhatsApp(alerts, {
-      isDigest: options?.isDigest,
-      actor,
-    });
-
-    if (result.sent) {
-      if (markAsSent) {
-        await prisma.alert.updateMany({
-          where: { id: { in: alerts.map((a) => a.id) } },
-          data: { emailSentAt: new Date() },
-        });
-      }
-
-      await logActivity({
-        entityType: "ALERTA",
-        action: "WHATSAPP_ALERTA_ENVIADO",
-        actor,
-        summary: `Notificación WhatsApp enviada a ${result.displayRecipient} con ${result.count} alerta(s) de vencimiento (≤ 60 días).`,
-        details: {
-          recipient: result.recipient,
-          provider: cfg.provider,
-          count: result.count,
-          messageId: result.messageId ?? null,
-          isDigest: Boolean(options?.isDigest),
-        },
-      });
-    }
-
-    return result;
-  } catch (error) {
-    const reason =
-      error instanceof Error
-        ? error.message
-        : "Error desconocido al enviar notificación por WhatsApp";
-    console.error("Error enviando alertas por WhatsApp:", error);
-
-    await logActivity({
-      entityType: "ALERTA",
-      action: "WHATSAPP_ALERTA_ERROR",
-      actor,
-      summary: `Error al enviar alerta por WhatsApp a ${cfg.displayRecipient}: ${reason}`,
-      details: { recipient: cfg.recipient, count: alerts.length, reason },
-    });
-
-    return {
-      sent: false,
-      skipped: false,
-      reason,
-      recipient: cfg.recipient,
-      displayRecipient: cfg.displayRecipient,
-      count: alerts.length,
-    };
-  }
-}
+const EXPIRY_ALERT_TYPES = [
+  "PRODUCTO_VENCIDO",
+  "VENCIMIENTO_CRITICO",
+  "VENCIMIENTO_PREVENTIVO",
+];
 
 export async function dispatchExpiryAlertTelegram(options?: {
   actor?: string;
@@ -215,16 +111,10 @@ export async function dispatchExpiryAlertTelegram(options?: {
   const markAsSent = options?.markAsSent ?? true;
   const cfg = getTelegramConfigStatus();
 
-  const alerts = await prisma.alert.findMany({
+  const candidateAlerts = await prisma.alert.findMany({
     where: {
       acknowledged: false,
-      type: {
-        in: [
-          "PRODUCTO_VENCIDO",
-          "VENCIMIENTO_CRITICO",
-          "VENCIMIENTO_PREVENTIVO",
-        ],
-      },
+      type: { in: EXPIRY_ALERT_TYPES },
       daysToExpiry: { lte: 60 },
       ...(onlyUnsent ? { emailSentAt: null } : {}),
     },
@@ -239,7 +129,7 @@ export async function dispatchExpiryAlertTelegram(options?: {
     orderBy: [{ daysToExpiry: "asc" }, { createdAt: "desc" }],
   });
 
-  if (alerts.length === 0) {
+  if (candidateAlerts.length === 0) {
     return {
       sent: false,
       skipped: true,
@@ -252,36 +142,126 @@ export async function dispatchExpiryAlertTelegram(options?: {
     };
   }
 
+  if (!cfg.configured) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: cfg.missingReason,
+      chatIds: cfg.chatIds,
+      displayRecipient: cfg.displayRecipient,
+      count: candidateAlerts.length,
+    };
+  }
+
+  let alertsToSend = candidateAlerts;
+  let claimTime: Date | null = null;
+
+  if (onlyUnsent) {
+    claimTime = new Date();
+    const claimed = await prisma.alert.updateMany({
+      where: {
+        id: { in: candidateAlerts.map((a) => a.id) },
+        acknowledged: false,
+        emailSentAt: null,
+      },
+      data: { emailSentAt: claimTime },
+    });
+
+    if (claimed.count === 0) {
+      return {
+        sent: false,
+        skipped: true,
+        reason: "Las alertas pendientes ya están siendo notificadas.",
+        chatIds: cfg.chatIds,
+        displayRecipient: cfg.displayRecipient,
+        count: 0,
+      };
+    }
+
+    alertsToSend = await prisma.alert.findMany({
+      where: {
+        id: { in: candidateAlerts.map((a) => a.id) },
+        emailSentAt: claimTime,
+      },
+      include: {
+        lot: {
+          include: {
+            product: true,
+            warehouse: true,
+          },
+        },
+      },
+      orderBy: [{ daysToExpiry: "asc" }, { createdAt: "desc" }],
+    });
+
+    if (alertsToSend.length === 0) {
+      return {
+        sent: false,
+        skipped: true,
+        reason: "No hay alertas pendientes reclamadas para enviar.",
+        chatIds: cfg.chatIds,
+        displayRecipient: cfg.displayRecipient,
+        count: 0,
+      };
+    }
+  }
+
+  const releaseClaimIfNeeded = async () => {
+    if (claimTime) {
+      await prisma.alert.updateMany({
+        where: {
+          id: { in: alertsToSend.map((a) => a.id) },
+          emailSentAt: claimTime,
+        },
+        data: { emailSentAt: null },
+      });
+    }
+  };
+
   try {
-    const result = await sendExpirationAlertsTelegram(alerts, {
+    const result = await sendExpirationAlertsTelegram(alertsToSend, {
       isDigest: options?.isDigest,
       actor,
     });
 
-    if (result.sent) {
-      if (markAsSent) {
+    if (!result.sent) {
+      await releaseClaimIfNeeded();
+      return result;
+    }
+
+    if (markAsSent) {
+      if (!claimTime) {
         await prisma.alert.updateMany({
-          where: { id: { in: alerts.map((a) => a.id) } },
+          where: {
+            id: { in: alertsToSend.map((a) => a.id) },
+            emailSentAt: null,
+          },
           data: { emailSentAt: new Date() },
         });
       }
-
-      await logActivity({
-        entityType: "ALERTA",
-        action: "TELEGRAM_ALERTA_ENVIADO",
-        actor,
-        summary: `Notificación Telegram enviada (${result.displayRecipient}) con ${result.count} alerta(s) de vencimiento (≤ 60 días).`,
-        details: {
-          chatIds: result.chatIds,
-          count: result.count,
-          messageId: result.messageId ?? null,
-          isDigest: Boolean(options?.isDigest),
-        },
-      });
+    } else {
+      await releaseClaimIfNeeded();
     }
+
+    await logActivity({
+      entityType: "ALERTA",
+      action: "TELEGRAM_ALERTA_ENVIADO",
+      actor,
+      summary: `Notificación Telegram enviada (${result.displayRecipient}) con ${result.count} alerta(s) de vencimiento (≤ 60 días).`,
+      details: {
+        chatIds: result.chatIds,
+        count: result.count,
+        messageId: result.messageId ?? null,
+        isDigest: Boolean(options?.isDigest),
+      },
+    });
 
     return result;
   } catch (error) {
+    await releaseClaimIfNeeded().catch((rollbackErr) =>
+      console.error("Error revirtiendo marca de envío Telegram:", rollbackErr)
+    );
+
     const reason =
       error instanceof Error
         ? error.message
@@ -293,7 +273,7 @@ export async function dispatchExpiryAlertTelegram(options?: {
       action: "TELEGRAM_ALERTA_ERROR",
       actor,
       summary: `Error al enviar alerta por Telegram (${cfg.displayRecipient}): ${reason}`,
-      details: { chatIds: cfg.chatIds, count: alerts.length, reason },
+      details: { chatIds: cfg.chatIds, count: alertsToSend.length, reason },
     });
 
     return {
@@ -302,7 +282,7 @@ export async function dispatchExpiryAlertTelegram(options?: {
       reason,
       chatIds: cfg.chatIds,
       displayRecipient: cfg.displayRecipient,
-      count: alerts.length,
+      count: alertsToSend.length,
     };
   }
 }
@@ -310,52 +290,14 @@ export async function dispatchExpiryAlertTelegram(options?: {
 export async function dispatchPendingExpiryNotifications(
   actor = "Motor Automático"
 ) {
-  const [whatsappResult, telegramResult] = await Promise.all([
-    dispatchExpiryAlertWhatsApp({
-      actor,
-      onlyUnsent: true,
-      isDigest: false,
-      markAsSent: false,
-    }),
-    dispatchExpiryAlertTelegram({
-      actor,
-      onlyUnsent: true,
-      isDigest: false,
-      markAsSent: false,
-    }),
-  ]);
-
-  if (whatsappResult?.sent || telegramResult?.sent) {
-    await prisma.alert.updateMany({
-      where: {
-        acknowledged: false,
-        emailSentAt: null,
-        type: {
-          in: [
-            "PRODUCTO_VENCIDO",
-            "VENCIMIENTO_CRITICO",
-            "VENCIMIENTO_PREVENTIVO",
-          ],
-        },
-        daysToExpiry: { lte: 60 },
-      },
-      data: { emailSentAt: new Date() },
-    });
-  }
-
-  return { whatsappResult, telegramResult };
-}
-
-export function schedulePendingExpiryNotifications(
-  actor = "Motor Automático"
-) {
-  after(async () => {
-    try {
-      await dispatchPendingExpiryNotifications(actor);
-    } catch (err) {
-      console.error("Error enviando notificaciones en segundo plano:", err);
-    }
+  const telegramResult = await dispatchExpiryAlertTelegram({
+    actor,
+    onlyUnsent: true,
+    isDigest: false,
+    markAsSent: true,
   });
+
+  return { telegramResult };
 }
 
 /**
@@ -364,14 +306,9 @@ export function schedulePendingExpiryNotifications(
  */
 export async function syncAlertsAndStatuses(
   actor = "Motor Automático",
-  options?: { sendWhatsApp?: boolean; sendTelegram?: boolean }
+  options?: { sendTelegram?: boolean }
 ) {
   const now = new Date();
-  const EXPIRY_ALERT_TYPES = [
-    "PRODUCTO_VENCIDO",
-    "VENCIMIENTO_CRITICO",
-    "VENCIMIENTO_PREVENTIVO",
-  ];
 
   const [lots, allActiveExpiryAlerts] = await Promise.all([
     prisma.inventoryLot.findMany({
@@ -544,35 +481,13 @@ export async function syncAlertsAndStatuses(
     }
   }
 
-  let whatsappResult: SendAlertWhatsAppResult | null = null;
-  if (options?.sendWhatsApp !== false) {
-    whatsappResult = await dispatchExpiryAlertWhatsApp({
-      actor,
-      onlyUnsent: true,
-      isDigest: false,
-      markAsSent: false,
-    });
-  }
-
   let telegramResult: SendAlertTelegramResult | null = null;
   if (options?.sendTelegram !== false) {
     telegramResult = await dispatchExpiryAlertTelegram({
       actor,
       onlyUnsent: true,
       isDigest: false,
-      markAsSent: false,
-    });
-  }
-
-  if (whatsappResult?.sent || telegramResult?.sent) {
-    await prisma.alert.updateMany({
-      where: {
-        acknowledged: false,
-        emailSentAt: null,
-        type: { in: EXPIRY_ALERT_TYPES },
-        daysToExpiry: { lte: 60 },
-      },
-      data: { emailSentAt: new Date() },
+      markAsSent: true,
     });
   }
 
@@ -581,7 +496,6 @@ export async function syncAlertsAndStatuses(
     updatedStatuses,
     createdAlerts,
     resolvedAlerts,
-    whatsappResult,
     telegramResult,
   };
 }
