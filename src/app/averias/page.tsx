@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  FileSpreadsheet,
-  FileText,
+  Boxes,
+  DollarSign,
+  Eye,
   Plus,
-  Search,
   ShieldAlert,
   Trash2,
 } from "lucide-react";
@@ -18,13 +18,32 @@ import {
   SeverityBadge,
 } from "@/components/StatusBadge";
 import { useToast } from "@/components/ToastProvider";
+import { DetailDrawer } from "@/components/ui/DetailDrawer";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { EntityTimeline } from "@/components/ui/EntityTimeline";
+import { EvidenceGallery } from "@/components/ui/EvidenceGallery";
+import { FilterToolbar } from "@/components/ui/FilterToolbar";
+import { FormSection } from "@/components/ui/FormSection";
+import { KpiCard } from "@/components/ui/KpiCard";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { ProcessStepper } from "@/components/ui/ProcessStepper";
+import {
+  ComboboxOption,
+  SearchableCombobox,
+} from "@/components/ui/SearchableCombobox";
 import { fetchWithCache, getCached, invalidateCache } from "@/lib/client-cache";
 import {
   DAMAGE_ACTION_LABELS,
   DAMAGE_TYPE_LABELS,
   formatCurrencyCOP,
   formatDateES,
+  formatDateTimeES,
 } from "@/lib/constants";
+import {
+  EvidencePhoto,
+  loadEvidencePhotos,
+  saveEvidencePhotos,
+} from "@/lib/evidence-store";
 
 interface LotOption {
   id: string;
@@ -54,12 +73,20 @@ interface DamagedItem {
   warehouse: { name: string };
 }
 
+const PROCESS_STEPS = [
+  { key: "PENDIENTE", label: "Pendiente", description: "Novedad reportada" },
+  { key: "EN_GESTION", label: "En gestión", description: "En tratamiento" },
+  { key: "RESUELTO", label: "Resuelto", description: "Caso cerrado" },
+];
+
 export default function AveriasPage() {
   const { notify } = useToast();
-  const { user, refreshAlertsCount } = useAppSession();
+  const { user, warehouseName, refreshAlertsCount } = useAppSession();
   const operatorName = user?.fullName || "Supervisor de Calidad";
 
   const [statusFilter, setStatusFilter] = useState("");
+  const [severityFilter, setSeverityFilter] = useState("");
+  const [search, setSearch] = useState("");
   const [records, setRecords] = useState<DamagedItem[]>(
     () => getCached<DamagedItem[]>("damaged:") ?? []
   );
@@ -68,11 +95,15 @@ export default function AveriasPage() {
   );
   const [loading, setLoading] = useState(() => !getCached("damaged:"));
   const [showModal, setShowModal] = useState(false);
-  const [lotSearch, setLotSearch] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [detailRecord, setDetailRecord] = useState<DamagedItem | null>(null);
+  const [detailPhotos, setDetailPhotos] = useState<EvidencePhoto[]>([]);
+  const [draftPhotos, setDraftPhotos] = useState<EvidencePhoto[]>([]);
   const [editingRecord, setEditingRecord] = useState<DamagedItem | null>(null);
-  const [deletingRecord, setDeletingRecord] = useState<DamagedItem | null>(null);
+  const [deletingRecord, setDeletingRecord] = useState<DamagedItem | null>(
+    null
+  );
   const [restoreStockOnDelete, setRestoreStockOnDelete] = useState(true);
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [page, setPage] = useState(1);
@@ -117,6 +148,14 @@ export default function AveriasPage() {
       }));
     }
   }, [user?.fullName]);
+
+  useEffect(() => {
+    if (detailRecord) {
+      setDetailPhotos(loadEvidencePhotos(`damaged:${detailRecord.id}`));
+    } else {
+      setDetailPhotos([]);
+    }
+  }, [detailRecord]);
 
   const loadData = useCallback(
     async (force = false) => {
@@ -178,6 +217,7 @@ export default function AveriasPage() {
       const exists = lots.find((l) => l.id === lotIdParam);
       if (exists) {
         setForm((prev) => ({ ...prev, lotId: exists.id }));
+        setDraftPhotos([]);
         setShowModal(true);
       }
     }
@@ -218,8 +258,11 @@ export default function AveriasPage() {
         notify({ title: "No se pudo guardar", description: msg, variant: "error" });
         return;
       }
+      if (json.record?.id && draftPhotos.length > 0) {
+        saveEvidencePhotos(`damaged:${json.record.id}`, draftPhotos);
+      }
       setShowModal(false);
-      setLotSearch("");
+      setDraftPhotos([]);
       setForm({
         lotId: lots[0]?.id ?? "",
         reportedBy: operatorName,
@@ -262,6 +305,9 @@ export default function AveriasPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (res.ok) {
+        if (detailRecord?.id === editingRecord.id && json.record) {
+          setDetailRecord(json.record);
+        }
         setEditingRecord(null);
         notify({
           title: "Gestión de avería actualizada",
@@ -304,6 +350,10 @@ export default function AveriasPage() {
         setErrorMsg(msg);
         notify({ title: "Error al eliminar", description: msg, variant: "error" });
       } else {
+        saveEvidencePhotos(`damaged:${deletingRecord.id}`, []);
+        if (detailRecord?.id === deletingRecord.id) {
+          setDetailRecord(null);
+        }
         setDeletingRecord(null);
         notify({
           title: "Avería eliminada",
@@ -323,15 +373,34 @@ export default function AveriasPage() {
     }
   };
 
-  const filteredModalLots = lotSearch.trim()
-    ? lots.filter((l) =>
-        `${l.lotNumber} ${l.product.sku} ${l.product.name}`
-          .toLowerCase()
-          .includes(lotSearch.trim().toLowerCase())
-      )
-    : lots;
+  const visibleRecords = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return records.filter((r) => {
+      if (severityFilter && r.severity !== severityFilter) return false;
+      if (!q) return true;
+      return `${r.product.sku} ${r.product.name} ${r.lot.lotNumber} ${
+        r.reportedBy
+      } ${r.notes ?? ""}`
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [records, search, severityFilter]);
 
-  const pagedRecords = paginateItems(records, page, pageSize);
+  const lotComboOptions: ComboboxOption[] = useMemo(
+    () =>
+      lots.map((l) => ({
+        value: l.id,
+        badge: l.product.sku,
+        label: `${l.lotNumber} — ${l.product.name}`,
+        sublabel: `${l.warehouse.name} · ${
+          l.quantityText || `${l.totalUnits} u.`
+        }`,
+        searchText: `${l.lotNumber} ${l.product.sku} ${l.product.name}`,
+      })),
+    [lots]
+  );
+
+  const pagedRecords = paginateItems(visibleRecords, page, pageSize);
 
   const selectedLot = lots.find((l) => l.id === form.lotId);
   const previewUnits = selectedLot
@@ -342,33 +411,51 @@ export default function AveriasPage() {
     ? previewUnits * selectedLot.product.unitCost
     : 0;
 
-  const totalLoss = records.reduce((acc, r) => acc + r.estimatedLoss, 0);
-  const totalAffectedUnits = records.reduce(
+  const totalLoss = visibleRecords.reduce((acc, r) => acc + r.estimatedLoss, 0);
+  const totalAffectedUnits = visibleRecords.reduce(
     (acc, r) => acc + r.unitsAffected,
     0
   );
-  const openCases = records.filter(
+  const openCases = visibleRecords.filter(
     (r) => r.resolutionStatus !== "RESUELTO"
   ).length;
+  const hasActiveFilters = Boolean(search || statusFilter || severityFilter);
+
+  const openEditRecord = (rec: DamagedItem) => {
+    setErrorMsg(null);
+    setEditingRecord(rec);
+    setUpdateForm({
+      resolutionStatus: rec.resolutionStatus,
+      actionTaken: rec.actionTaken,
+      notes: rec.notes ?? "",
+      actor: operatorName,
+    });
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            Gestión de Productos Averiados
-          </h1>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            Registro de novedades físicas, descuento automático de inventario,
-            cuarentena y trazabilidad de resolución.
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+      <PageHeader
+        title="Productos Averiados"
+        badge={warehouseName}
+        description="Registro de novedades físicas, evidencias fotográficas, impacto económico y seguimiento de resolución."
+        exports={[
+          {
+            label: "Excel",
+            href: "/api/reports/export?type=damaged",
+            format: "xlsx",
+          },
+          {
+            label: "PDF",
+            href: "/api/reports/export?type=damaged&format=pdf",
+            format: "pdf",
+          },
+        ]}
+        primaryAction={
           <button
             type="button"
             onClick={() => {
               setErrorMsg(null);
-              setLotSearch("");
+              setDraftPhotos([]);
               setForm((prev) => ({
                 ...prev,
                 lotId: prev.lotId || lots[0]?.id || "",
@@ -376,76 +463,100 @@ export default function AveriasPage() {
               }));
               setShowModal(true);
             }}
-            className="ui-btn ui-btn-orange col-span-2 sm:col-span-1"
+            className="ui-btn ui-btn-primary"
           >
             <Plus className="h-4 w-4" />
             Reportar Avería
           </button>
-          <a
-            href="/api/reports/export?type=damaged"
-            className="ui-btn ui-btn-emerald"
-          >
-            <FileSpreadsheet className="h-4 w-4 shrink-0" />
-            <span className="truncate">Excel</span>
-          </a>
-          <a
-            href="/api/reports/export?type=damaged&format=pdf"
-            className="ui-btn ui-btn-rose"
-          >
-            <FileText className="h-4 w-4 shrink-0" />
-            <span className="truncate">PDF</span>
-          </a>
-        </div>
-      </div>
+        }
+      />
 
       {/* KPIs de averías */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
-        <div className="ui-card border-l-4 border-l-orange-500 p-3.5 sm:p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-[11px]">
-            Casos Abiertos
-          </p>
-          <p className="tabular-nums mt-1 text-xl font-bold text-orange-700 dark:text-orange-400 sm:text-2xl">
-            {openCases}
-          </p>
-        </div>
-        <div className="ui-card border-l-4 border-l-indigo-500 p-3.5 sm:p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-[11px]">
-            Unidades Afectadas
-          </p>
-          <p className="tabular-nums mt-1 text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl">
-            {totalAffectedUnits.toLocaleString("es-CO")} u.
-          </p>
-        </div>
-        <div className="ui-card col-span-2 border-l-4 border-l-red-500 p-3.5 sm:col-span-1 sm:p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 sm:text-[11px]">
-            Impacto Económico Estimado
-          </p>
-          <p className="tabular-nums mt-1 text-lg font-bold text-red-700 dark:text-red-400 sm:text-xl lg:text-2xl">
-            {formatCurrencyCOP(totalLoss)}
-          </p>
-        </div>
+        <KpiCard
+          label="Casos Abiertos"
+          value={openCases}
+          sublabel="Pendientes o en gestión"
+          icon={<ShieldAlert className="h-4 w-4" />}
+          tone="orange"
+        />
+        <KpiCard
+          label="Unidades Afectadas"
+          value={`${totalAffectedUnits.toLocaleString("es-CO")} u.`}
+          sublabel="Total en vista actual"
+          icon={<Boxes className="h-4 w-4" />}
+          tone="indigo"
+        />
+        <KpiCard
+          label="Impacto Estimado"
+          value={formatCurrencyCOP(totalLoss)}
+          sublabel="Costo unitario × afectadas"
+          icon={<DollarSign className="h-4 w-4" />}
+          tone="red"
+          className="col-span-2 sm:col-span-1"
+        />
       </div>
 
       {/* Filtro */}
-      <div className="ui-card flex flex-wrap items-center justify-between gap-3 p-4">
-        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-          Estado de gestión
-        </span>
-        <select
-          value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
-            setPage(1);
-          }}
-          aria-label="Filtrar averías por estado de gestión"
-          className="ui-select sm:w-52"
-        >
-          <option value="">Todos</option>
-          <option value="PENDIENTE">Pendiente</option>
-          <option value="EN_GESTION">En gestión</option>
-          <option value="RESUELTO">Resuelto</option>
-        </select>
-      </div>
+      <FilterToolbar
+        searchValue={search}
+        onSearchChange={(val) => {
+          setSearch(val);
+          setPage(1);
+        }}
+        searchPlaceholder="Buscar por SKU, producto, lote, reportado por o detalle..."
+        resultCount={visibleRecords.length}
+        resultLabel="registro(s) de avería"
+        hasActiveFilters={hasActiveFilters}
+        onClearFilters={() => {
+          setSearch("");
+          setStatusFilter("");
+          setSeverityFilter("");
+          setPage(1);
+        }}
+        tabs={
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { id: "", label: "Todos" },
+              { id: "PENDIENTE", label: "Pendientes" },
+              { id: "EN_GESTION", label: "En gestión" },
+              { id: "RESUELTO", label: "Resueltos" },
+            ].map((t) => (
+              <button
+                key={t.id || "all"}
+                type="button"
+                onClick={() => {
+                  setStatusFilter(t.id);
+                  setPage(1);
+                }}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  statusFilter === t.id
+                    ? "bg-white text-slate-900 shadow-2xs ring-1 ring-slate-200 dark:bg-slate-800 dark:text-white dark:ring-slate-700"
+                    : "text-slate-600 hover:bg-white/60 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/60"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        }
+        filters={
+          <select
+            value={severityFilter}
+            onChange={(e) => {
+              setSeverityFilter(e.target.value);
+              setPage(1);
+            }}
+            aria-label="Filtrar por severidad"
+            className="ui-select sm:w-44"
+          >
+            <option value="">Todas severidades</option>
+            <option value="LEVE">Leve</option>
+            <option value="MODERADA">Moderada</option>
+            <option value="PERDIDA_TOTAL">Pérdida total</option>
+          </select>
+        }
+      />
 
       {/* Vista móvil/tablet en tarjetas */}
       <div className="space-y-3 lg:hidden">
@@ -453,15 +564,23 @@ export default function AveriasPage() {
           <div className="ui-card p-8 text-center text-sm text-slate-500 dark:text-slate-400">
             Cargando registros...
           </div>
-        ) : records.length === 0 ? (
-          <div className="ui-card p-8 text-center text-sm text-slate-500 dark:text-slate-400">
-            No hay productos averiados registrados.
+        ) : visibleRecords.length === 0 ? (
+          <div className="ui-card">
+            <EmptyState
+              icon={<ShieldAlert className="h-6 w-6" />}
+              title="Sin productos averiados"
+              description="No hay novedades registradas con los filtros aplicados."
+            />
           </div>
         ) : (
           pagedRecords.items.map((rec) => (
             <div key={rec.id} className="ui-card space-y-3 p-4">
               <div className="flex items-start justify-between gap-2">
-                <div>
+                <button
+                  type="button"
+                  onClick={() => setDetailRecord(rec)}
+                  className="min-w-0 text-left"
+                >
                   <p className="tabular-nums text-xs font-medium text-slate-500 dark:text-slate-400">
                     {formatDateES(rec.reportedAt)} · {rec.reportedBy}
                   </p>
@@ -472,7 +591,7 @@ export default function AveriasPage() {
                     Lote <span className="font-mono">{rec.lot.lotNumber}</span>{" "}
                     · {rec.warehouse.name}
                   </p>
-                </div>
+                </button>
                 <ResolutionStatusBadge status={rec.resolutionStatus} />
               </div>
 
@@ -502,17 +621,16 @@ export default function AveriasPage() {
                 <div className="flex gap-1.5">
                   <button
                     type="button"
-                    onClick={() => {
-                      setErrorMsg(null);
-                      setEditingRecord(rec);
-                      setUpdateForm({
-                        resolutionStatus: rec.resolutionStatus,
-                        actionTaken: rec.actionTaken,
-                        notes: rec.notes ?? "",
-                        actor: operatorName,
-                      });
-                    }}
-                    className="ui-btn ui-btn-secondary px-3 py-1.5 text-xs"
+                    onClick={() => setDetailRecord(rec)}
+                    className="ui-btn ui-btn-secondary px-2.5 py-1.5 text-xs"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    Ficha
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openEditRecord(rec)}
+                    className="ui-btn ui-btn-secondary px-2.5 py-1.5 text-xs"
                   >
                     Actualizar
                   </button>
@@ -524,7 +642,7 @@ export default function AveriasPage() {
                       setDeletingRecord(rec);
                     }}
                     aria-label="Eliminar avería"
-                    className="rounded-lg border border-red-200 bg-white p-1.5 text-red-600 hover:bg-red-50 dark:border-red-900/70 dark:bg-slate-800 dark:text-red-400 dark:hover:bg-red-950/60"
+                    className="ui-btn ui-btn-ghost border border-red-200 p-1.5 text-red-600 hover:bg-red-50 dark:border-red-900/70 dark:text-red-400"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -559,20 +677,22 @@ export default function AveriasPage() {
                     Cargando registros...
                   </td>
                 </tr>
-              ) : records.length === 0 ? (
+              ) : visibleRecords.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="px-4 py-10 text-center text-slate-500 dark:text-slate-400"
-                  >
-                    No hay productos averiados registrados.
+                  <td colSpan={6}>
+                    <EmptyState
+                      icon={<ShieldAlert className="h-6 w-6" />}
+                      title="Sin productos averiados"
+                      description="No hay novedades registradas con los filtros aplicados."
+                    />
                   </td>
                 </tr>
               ) : (
                 pagedRecords.items.map((rec) => (
                   <tr
                     key={rec.id}
-                    className="transition-colors hover:bg-slate-50/90 dark:hover:bg-slate-800/50"
+                    onClick={() => setDetailRecord(rec)}
+                    className="cursor-pointer transition-colors hover:bg-slate-50/90 dark:hover:bg-slate-800/50"
                   >
                     <td className="px-4 py-3.5">
                       <p className="tabular-nums text-xs font-medium text-slate-900 dark:text-slate-100">
@@ -615,21 +735,24 @@ export default function AveriasPage() {
                       </p>
                       <ResolutionStatusBadge status={rec.resolutionStatus} />
                     </td>
-                    <td className="px-4 py-3.5 text-right">
+                    <td
+                      className="px-4 py-3.5 text-right"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <div className="flex justify-end gap-1.5">
                         <button
                           type="button"
-                          onClick={() => {
-                            setErrorMsg(null);
-                            setEditingRecord(rec);
-                            setUpdateForm({
-                              resolutionStatus: rec.resolutionStatus,
-                              actionTaken: rec.actionTaken,
-                              notes: rec.notes ?? "",
-                              actor: operatorName,
-                            });
-                          }}
-                          className="ui-btn ui-btn-secondary px-3 py-1.5 text-xs"
+                          onClick={() => setDetailRecord(rec)}
+                          title="Ver ficha, evidencias e historial"
+                          aria-label="Ver ficha de avería"
+                          className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-600 transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEditRecord(rec)}
+                          className="ui-btn ui-btn-secondary px-2.5 py-1.5 text-xs"
                         >
                           Actualizar
                         </button>
@@ -640,7 +763,7 @@ export default function AveriasPage() {
                             setRestoreStockOnDelete(rec.stockDeducted);
                             setDeletingRecord(rec);
                           }}
-                          title="Eliminar avería errónea"
+                          title="Eliminar avería"
                           aria-label="Eliminar avería"
                           className="rounded-lg border border-red-200 bg-white p-1.5 text-red-600 transition-colors hover:bg-red-50 dark:border-red-900/70 dark:bg-slate-800 dark:text-red-400 dark:hover:bg-red-950/60"
                         >
@@ -668,16 +791,150 @@ export default function AveriasPage() {
         itemLabel="averías"
       />
 
-      {/* Modal Reportar Avería */}
+      {/* Drawer Detalle del Caso de Avería */}
+      <DetailDrawer
+        open={Boolean(detailRecord)}
+        onClose={() => setDetailRecord(null)}
+        title={detailRecord ? detailRecord.product.name : ""}
+        subtitle={
+          detailRecord
+            ? `${detailRecord.product.sku} · Lote ${detailRecord.lot.lotNumber}`
+            : undefined
+        }
+        icon={
+          <ShieldAlert className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+        }
+        badge={
+          detailRecord && (
+            <>
+              <ResolutionStatusBadge status={detailRecord.resolutionStatus} />
+              <SeverityBadge severity={detailRecord.severity} />
+            </>
+          )
+        }
+        footer={
+          detailRecord && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMsg(null);
+                  setRestoreStockOnDelete(detailRecord.stockDeducted);
+                  setDeletingRecord(detailRecord);
+                }}
+                className="ui-btn ui-btn-ghost px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:text-red-400"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Eliminar
+              </button>
+              <button
+                type="button"
+                onClick={() => openEditRecord(detailRecord)}
+                className="ui-btn ui-btn-primary py-1.5 text-xs"
+              >
+                Actualizar Gestión
+              </button>
+            </div>
+          )
+        }
+      >
+        {detailRecord && (
+          <div className="space-y-5">
+            <div>
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Estado del Proceso
+              </p>
+              <ProcessStepper
+                steps={PROCESS_STEPS}
+                currentKey={detailRecord.resolutionStatus}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-xs dark:border-slate-800 dark:bg-slate-900/50">
+              <div>
+                <p className="text-[11px] font-semibold uppercase text-slate-400">
+                  Afectación
+                </p>
+                <p className="tabular-nums mt-1 text-sm font-bold text-slate-900 dark:text-slate-100">
+                  {detailRecord.unitsAffected} u. ({detailRecord.boxesAffected}{" "}
+                  cajas)
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  {detailRecord.stockDeducted
+                    ? "Descontado del stock"
+                    : "Sin descuento de stock"}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase text-slate-400">
+                  Impacto Económico
+                </p>
+                <p className="tabular-nums mt-1 text-sm font-bold text-red-700 dark:text-red-400">
+                  {formatCurrencyCOP(detailRecord.estimatedLoss)}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Reportado: {formatDateTimeES(detailRecord.reportedAt)}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 rounded-xl border border-slate-200 p-3.5 text-xs dark:border-slate-800">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Detalle y Disposición
+              </p>
+              <p className="text-slate-700 dark:text-slate-300">
+                <strong>Tipo:</strong>{" "}
+                {DAMAGE_TYPE_LABELS[detailRecord.damageType] ??
+                  detailRecord.damageType}
+              </p>
+              <p className="text-slate-700 dark:text-slate-300">
+                <strong>Acción:</strong>{" "}
+                {DAMAGE_ACTION_LABELS[detailRecord.actionTaken] ??
+                  detailRecord.actionTaken}
+              </p>
+              <p className="text-slate-700 dark:text-slate-300">
+                <strong>Reportó:</strong> {detailRecord.reportedBy}
+              </p>
+              {detailRecord.notes && (
+                <p className="mt-2 rounded-lg bg-slate-50 p-2.5 text-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
+                  {detailRecord.notes}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Evidencias Fotográficas
+              </h3>
+              <EvidenceGallery
+                photos={detailPhotos}
+                onChange={(next) => {
+                  setDetailPhotos(next);
+                  saveEvidencePhotos(`damaged:${detailRecord.id}`, next);
+                }}
+              />
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Historial de Actuaciones
+              </h3>
+              <EntityTimeline entityId={detailRecord.id} />
+            </div>
+          </div>
+        )}
+      </DetailDrawer>
+
+      {/* Modal Reportar Avería por Secciones */}
       <Modal
         open={showModal}
         onClose={() => setShowModal(false)}
         title="Reportar Producto Averiado"
-        subtitle="Calcula automáticamente la pérdida y permite descontar stock o bloquear el lote."
+        subtitle="Calcula automáticamente la pérdida, adjunta evidencias y actualiza stock."
         icon={
-          <ShieldAlert className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+          <ShieldAlert className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
         }
-        maxWidthClass="max-w-lg"
+        maxWidthClass="max-w-xl"
         closeDisabled={submitting}
         error={errorMsg}
         footer={
@@ -694,195 +951,195 @@ export default function AveriasPage() {
               type="submit"
               form="damaged-create-form"
               disabled={submitting}
-              className="ui-btn ui-btn-orange"
+              className="ui-btn ui-btn-primary"
             >
               {submitting ? "Registrando..." : "Registrar Avería"}
             </button>
           </div>
         }
       >
-        <form id="damaged-create-form" noValidate onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-              Lote Afectado *
-            </label>
-            <div className="relative mt-1">
-              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
-              <input
-                type="text"
-                value={lotSearch}
-                onChange={(e) => setLotSearch(e.target.value)}
-                placeholder="Filtrar lote por número, SKU o producto..."
-                className="ui-input py-1.5 pl-8 text-xs"
-              />
-            </div>
-            <select
-              required
-              value={form.lotId}
-              onChange={(e) => setForm({ ...form, lotId: e.target.value })}
-              className="ui-select mt-1.5"
-            >
-              <option value="">Seleccione un lote...</option>
-              {filteredModalLots.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.lotNumber} — {l.product.name} ({l.warehouse.name},{" "}
-                  {l.quantityText || `${l.totalUnits} u.`})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <form
+          id="damaged-create-form"
+          noValidate
+          onSubmit={handleSubmit}
+          className="space-y-4"
+        >
+          <FormSection step={1} title="Producto y Lote Afectado">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Reportado por *
+              <label className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Lote Afectado *
               </label>
-              <input
-                required
-                value={form.reportedBy}
-                onChange={(e) =>
-                  setForm({ ...form, reportedBy: e.target.value })
-                }
-                placeholder="Nombre del operario"
-                className="ui-input mt-1"
+              <SearchableCombobox
+                options={lotComboOptions}
+                value={form.lotId}
+                onChange={(val) => setForm({ ...form, lotId: val })}
+                placeholder="Seleccione un lote..."
+                searchPlaceholder="Buscar por número de lote, SKU o producto..."
               />
             </div>
+          </FormSection>
+
+          <FormSection step={2} title="Clasificación y Responsable">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Reportado por *
+                </label>
+                <input
+                  required
+                  value={form.reportedBy}
+                  onChange={(e) =>
+                    setForm({ ...form, reportedBy: e.target.value })
+                  }
+                  placeholder="Nombre del operario"
+                  className="ui-input mt-1"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Tipo de Avería *
+                </label>
+                <select
+                  value={form.damageType}
+                  onChange={(e) =>
+                    setForm({ ...form, damageType: e.target.value })
+                  }
+                  className="ui-select mt-1"
+                >
+                  {Object.entries(DAMAGE_TYPE_LABELS).map(([k, label]) => (
+                    <option key={k} value={k}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div className="col-span-2 sm:col-span-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Severidad
+                </label>
+                <select
+                  value={form.severity}
+                  onChange={(e) =>
+                    setForm({ ...form, severity: e.target.value })
+                  }
+                  className="ui-select mt-1"
+                >
+                  <option value="LEVE">Leve</option>
+                  <option value="MODERADA">Moderada</option>
+                  <option value="PERDIDA_TOTAL">Pérdida total</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Cajas Afectadas
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  placeholder="0"
+                  value={form.boxesAffected}
+                  onChange={(e) =>
+                    setForm({ ...form, boxesAffected: e.target.value })
+                  }
+                  className="ui-input mt-1"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Unid. Sueltas
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  placeholder="0"
+                  value={form.looseUnitsAffected}
+                  onChange={(e) =>
+                    setForm({ ...form, looseUnitsAffected: e.target.value })
+                  }
+                  className="ui-input mt-1"
+                />
+              </div>
+            </div>
+
+            {selectedLot && (
+              <div className="tabular-nums rounded-lg border border-orange-200 bg-orange-50/80 px-3 py-2 text-xs text-orange-900 dark:border-orange-900/70 dark:bg-orange-950/50 dark:text-orange-200">
+                Total afectado: <strong>{previewUnits} unidades</strong> ·
+                Pérdida estimada:{" "}
+                <strong>{formatCurrencyCOP(previewLoss)}</strong>
+              </div>
+            )}
+          </FormSection>
+
+          <FormSection step={3} title="Disposición y Control de Stock">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Tipo de Avería *
+                Acción Tomada
               </label>
               <select
-                value={form.damageType}
+                value={form.actionTaken}
                 onChange={(e) =>
-                  setForm({ ...form, damageType: e.target.value })
+                  setForm({ ...form, actionTaken: e.target.value })
                 }
                 className="ui-select mt-1"
               >
-                {Object.entries(DAMAGE_TYPE_LABELS).map(([k, label]) => (
+                {Object.entries(DAMAGE_ACTION_LABELS).map(([k, label]) => (
                   <option key={k} value={k}>
                     {label}
                   </option>
                 ))}
               </select>
             </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div className="col-span-2 sm:col-span-1">
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Severidad
+            <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3 text-xs dark:border-slate-800 dark:bg-slate-900">
+              <label className="flex cursor-pointer items-center gap-2 font-medium text-slate-700 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={form.stockDeducted}
+                  onChange={(e) =>
+                    setForm({ ...form, stockDeducted: e.target.checked })
+                  }
+                />
+                Descontar unidades afectadas del inventario disponible del lote
               </label>
-              <select
-                value={form.severity}
-                onChange={(e) => setForm({ ...form, severity: e.target.value })}
-                className="ui-select mt-1"
-              >
-                <option value="LEVE">Leve</option>
-                <option value="MODERADA">Moderada</option>
-                <option value="PERDIDA_TOTAL">Pérdida total</option>
-              </select>
+              <label className="flex cursor-pointer items-center gap-2 font-semibold text-purple-700 dark:text-purple-400">
+                <input
+                  type="checkbox"
+                  checked={form.quarantineLot}
+                  onChange={(e) =>
+                    setForm({ ...form, quarantineLot: e.target.checked })
+                  }
+                />
+                Bloquear lote completo en estado Cuarentena
+              </label>
             </div>
+          </FormSection>
+
+          <FormSection step={4} title="Descripción y Evidencias Fotográficas">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Cajas Afectadas
+                Descripción de Novedad
               </label>
-              <input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                placeholder="0"
-                value={form.boxesAffected}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    boxesAffected: e.target.value,
-                  })
-                }
-                className="ui-input mt-1"
+              <textarea
+                rows={2}
+                value={form.notes}
+                onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                placeholder="Detalle del daño observado..."
+                className="ui-textarea mt-1"
               />
             </div>
+
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Unid. Sueltas
-              </label>
-              <input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                placeholder="0"
-                value={form.looseUnitsAffected}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    looseUnitsAffected: e.target.value,
-                  })
-                }
-                className="ui-input mt-1"
-              />
+              <p className="mb-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Evidencias Fotográficas
+              </p>
+              <EvidenceGallery photos={draftPhotos} onChange={setDraftPhotos} />
             </div>
-          </div>
-
-          {selectedLot && (
-            <div className="tabular-nums rounded-xl border border-orange-200 bg-orange-50 px-3.5 py-2.5 text-xs text-orange-900 dark:border-orange-900/70 dark:bg-orange-950/50 dark:text-orange-200">
-              Total afectado: <strong>{previewUnits} unidades</strong> · Pérdida
-              estimada: <strong>{formatCurrencyCOP(previewLoss)}</strong>
-            </div>
-          )}
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-              Acción Tomada
-            </label>
-            <select
-              value={form.actionTaken}
-              onChange={(e) =>
-                setForm({ ...form, actionTaken: e.target.value })
-              }
-              className="ui-select mt-1"
-            >
-              {Object.entries(DAMAGE_ACTION_LABELS).map(([k, label]) => (
-                <option key={k} value={k}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3.5 text-xs dark:border-slate-800 dark:bg-slate-800/50">
-            <label className="flex cursor-pointer items-center gap-2 font-medium text-slate-700 dark:text-slate-300">
-              <input
-                type="checkbox"
-                checked={form.stockDeducted}
-                onChange={(e) =>
-                  setForm({ ...form, stockDeducted: e.target.checked })
-                }
-              />
-              Descontar unidades afectadas del inventario disponible del lote
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 font-semibold text-purple-700 dark:text-purple-400">
-              <input
-                type="checkbox"
-                checked={form.quarantineLot}
-                onChange={(e) =>
-                  setForm({ ...form, quarantineLot: e.target.checked })
-                }
-              />
-              Bloquear lote completo en estado Cuarentena
-            </label>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-              Descripción / Evidencia de Novedad
-            </label>
-            <textarea
-              rows={2}
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              placeholder="Detalle del daño observado..."
-              className="ui-textarea mt-1"
-            />
-          </div>
+          </FormSection>
         </form>
       </Modal>
 
@@ -898,7 +1155,7 @@ export default function AveriasPage() {
         icon={
           <ShieldAlert className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
         }
-        maxWidthClass="max-w-md"
+        maxWidthClass="max-w-lg"
         closeDisabled={updating}
         error={errorMsg}
         footer={
@@ -923,7 +1180,17 @@ export default function AveriasPage() {
         }
       >
         {editingRecord && (
-          <form id="damaged-update-form" noValidate onSubmit={handleUpdateResolution} className="space-y-4">
+          <form
+            id="damaged-update-form"
+            noValidate
+            onSubmit={handleUpdateResolution}
+            className="space-y-4"
+          >
+            <ProcessStepper
+              steps={PROCESS_STEPS}
+              currentKey={updateForm.resolutionStatus}
+            />
+
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 Estado de Resolución
@@ -950,10 +1217,7 @@ export default function AveriasPage() {
               <select
                 value={updateForm.actionTaken}
                 onChange={(e) =>
-                  setUpdateForm({
-                    ...updateForm,
-                    actionTaken: e.target.value,
-                  })
+                  setUpdateForm({ ...updateForm, actionTaken: e.target.value })
                 }
                 className="ui-select mt-1"
               >

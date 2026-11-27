@@ -12,7 +12,6 @@ import {
   CheckCircle2,
   ClipboardCheck,
   FileSpreadsheet,
-  HelpCircle,
   History,
   KeyRound,
   LayoutDashboard,
@@ -370,36 +369,7 @@ export function HelpBubble() {
 
   return (
     <>
-      {/* Botón flotante de Ayuda (escritorio; en móvil se abre desde la barra superior) */}
-      <div className="fixed bottom-5 right-5 z-40 hidden items-center gap-2 lg:flex">
-        <button
-          type="button"
-          onClick={() => setOpen((prev) => !prev)}
-          aria-expanded={open}
-          aria-label="Abrir burbuja de ayuda del sistema"
-          className={`group inline-flex items-center gap-2.5 rounded-full border px-4 py-2.5 text-sm font-semibold shadow-lg transition-all duration-200 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-500/30 ${
-            open
-              ? "border-slate-800 bg-slate-900 text-white dark:border-slate-600 dark:bg-slate-800"
-              : "border-indigo-500/30 bg-indigo-600 text-white hover:-translate-y-0.5 hover:bg-indigo-700 hover:shadow-xl"
-          }`}
-        >
-          {open ? (
-            <X className="h-5 w-5 transition-transform duration-200" />
-          ) : (
-            <HelpCircle className="h-5 w-5 transition-transform duration-200 group-hover:rotate-12" />
-          )}
-          <span className="hidden sm:inline">
-            {open ? "Cerrar Ayuda" : "Guía del Sistema"}
-          </span>
-          {!open && (
-            <span className="hidden rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide sm:inline">
-              ?
-            </span>
-          )}
-        </button>
-      </div>
-
-      {/* Panel / Burbuja de Ayuda Completa */}
+      {/* Panel / Burbuja de Ayuda Completa (activada desde la barra superior o tecla ?) */}
       {open && (
         <>
           <div

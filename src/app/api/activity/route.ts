@@ -5,12 +5,31 @@ export async function GET(req: NextRequest) {
   try {
     const params = req.nextUrl.searchParams;
     const entityType = params.get("entityType") ?? "";
+    const entityId = params.get("entityId")?.trim() ?? "";
+    const action = params.get("action")?.trim() ?? "";
+    const dateFrom = params.get("dateFrom")?.trim() ?? "";
+    const dateTo = params.get("dateTo")?.trim() ?? "";
     const search = params.get("search")?.trim() ?? "";
     const pageParam = params.get("page");
     const pageSizeParam = params.get("pageSize");
 
+    const createdAtFilter: { gte?: Date; lte?: Date } = {};
+    if (dateFrom) {
+      const from = new Date(`${dateFrom}T00:00:00`);
+      if (!Number.isNaN(from.getTime())) createdAtFilter.gte = from;
+    }
+    if (dateTo) {
+      const to = new Date(`${dateTo}T23:59:59.999`);
+      if (!Number.isNaN(to.getTime())) createdAtFilter.lte = to;
+    }
+
     const where = {
       ...(entityType ? { entityType } : {}),
+      ...(entityId ? { entityId } : {}),
+      ...(action ? { action: { contains: action, mode: "insensitive" as const } } : {}),
+      ...(Object.keys(createdAtFilter).length > 0
+        ? { createdAt: createdAtFilter }
+        : {}),
       ...(search
         ? {
             OR: [

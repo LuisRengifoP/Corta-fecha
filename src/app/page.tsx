@@ -10,9 +10,11 @@ import {
   Boxes,
   CheckCircle2,
   ClipboardCheck,
-  FileSpreadsheet,
-  FileText,
+  Eye,
   History,
+  Layers,
+  MapPin,
+  Package,
   RefreshCw,
   ShieldAlert,
   Warehouse,
@@ -20,13 +22,46 @@ import {
 import { useAppSession } from "@/components/AppSessionContext";
 import {
   DaysRemainingBadge,
+  InspectionStatusBadge,
   LotStatusBadge,
   SeverityBadge,
 } from "@/components/StatusBadge";
 import { useToast } from "@/components/ToastProvider";
+import { DonutSegment, ExpiryDonutChart } from "@/components/ui/Charts";
+import { DetailDrawer } from "@/components/ui/DetailDrawer";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { EntityTimeline } from "@/components/ui/EntityTimeline";
+import { KpiCard } from "@/components/ui/KpiCard";
+import { ExportActions, PageHeader } from "@/components/ui/PageHeader";
 import { fetchWithCache, getCached, invalidateCache } from "@/lib/client-cache";
-import { formatCurrencyCOP, formatDateTimeES } from "@/lib/constants";
+import {
+  formatCurrencyCOP,
+  formatDateTimeES,
+  INSPECTION_TYPE_LABELS,
+} from "@/lib/constants";
 import { formatExpiryLabel } from "@/lib/packaging";
+
+interface UrgentLot {
+  id: string;
+  lotNumber: string;
+  boxes: number;
+  packs: number;
+  dispacks: number;
+  displays: number;
+  bags: number;
+  looseUnits: number;
+  totalUnits: number;
+  quantityText: string;
+  expiryDate: string;
+  expiryPrecision: string;
+  expiryDisplay: string | null;
+  daysToExpiry: number;
+  status: string;
+  locationCode: string | null;
+  notes: string | null;
+  product: { name: string; sku: string; unitsPerBox: number; unitCost: number };
+  warehouse: { name: string };
+}
 
 interface DashboardData {
   kpis: {
@@ -59,22 +94,7 @@ interface DashboardData {
     totalUnits: number;
     urgentLots: number;
   }>;
-  urgentLots: Array<{
-    id: string;
-    lotNumber: string;
-    boxes: number;
-    looseUnits: number;
-    totalUnits: number;
-    quantityText: string;
-    expiryDate: string;
-    expiryPrecision: string;
-    expiryDisplay: string | null;
-    daysToExpiry: number;
-    status: string;
-    locationCode: string | null;
-    product: { name: string; sku: string; unitsPerBox: number };
-    warehouse: { name: string };
-  }>;
+  urgentLots: UrgentLot[];
   activeAlerts: Array<{
     id: string;
     type: string;
@@ -82,6 +102,14 @@ interface DashboardData {
     title: string;
     message: string;
     createdAt: string;
+  }>;
+  recentInspections?: Array<{
+    id: string;
+    inspectorName: string;
+    inspectionType: string;
+    status: string;
+    inspectedAt: string;
+    lot: { lotNumber: string; product: { name: string } } | null;
   }>;
   recentActivity: Array<{
     id: string;
@@ -93,15 +121,47 @@ interface DashboardData {
   }>;
 }
 
+const BUCKET_META: Record<
+  string,
+  { stroke: string; dotClass: string; href: string }
+> = {
+  Vencidos: {
+    stroke: "#ef4444",
+    dotClass: "bg-red-500",
+    href: "/inventario?expiryWindow=expired",
+  },
+  "Críticos (0-15d)": {
+    stroke: "#f97316",
+    dotClass: "bg-orange-500",
+    href: "/inventario?expiryWindow=15",
+  },
+  "Preventivo (16-30d)": {
+    stroke: "#f59e0b",
+    dotClass: "bg-amber-400",
+    href: "/inventario?expiryWindow=30",
+  },
+  "Observación (31-60d)": {
+    stroke: "#0ea5e9",
+    dotClass: "bg-sky-500",
+    href: "/inventario?expiryWindow=60",
+  },
+  "Vigentes (>60d)": {
+    stroke: "#10b981",
+    dotClass: "bg-emerald-500",
+    href: "/inventario?status=ACTIVO",
+  },
+};
+
 export default function DashboardPage() {
   const { notify } = useToast();
-  const { refreshAlertsCount } = useAppSession();
+  const { warehouseName, refreshAlertsCount } = useAppSession();
   const [data, setData] = useState<DashboardData | null>(
     () => getCached<DashboardData>("dashboard:summary") ?? null
   );
   const [loading, setLoading] = useState(() => !getCached("dashboard:summary"));
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [selectedLot, setSelectedLot] = useState<UrgentLot | null>(null);
 
   const fetchDashboard = useCallback(async (force = false) => {
     if (!getCached("dashboard:summary")) {
@@ -157,14 +217,16 @@ export default function DashboardPage() {
         const errJson = await res.json().catch(() => ({}));
         notify({
           title: "No se pudo ejecutar el análisis",
-          description: errJson.error || "Inténtalo nuevamente en unos segundos.",
+          description:
+            errJson.error || "Inténtalo nuevamente en unos segundos.",
           variant: "error",
         });
       }
     } catch {
       notify({
         title: "Error de conexión",
-        description: "No se pudo conectar con el servidor para ejecutar el análisis.",
+        description:
+          "No se pudo conectar con el servidor para ejecutar el análisis.",
         variant: "error",
       });
     } finally {
@@ -175,29 +237,32 @@ export default function DashboardPage() {
   if (loading && !data) {
     return (
       <div className="space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-b border-slate-200 pb-5 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-2">
-            <div className="h-8 w-72 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-800" />
+            <div className="h-7 w-72 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-800" />
             <div className="h-4 w-96 max-w-full animate-pulse rounded-md bg-slate-200 dark:bg-slate-800" />
           </div>
           <div className="h-10 w-64 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
         </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-5">
           {[1, 2, 3, 4, 5].map((i) => (
             <div
               key={i}
-              className="h-32 animate-pulse rounded-2xl bg-slate-200 dark:bg-slate-800"
+              className="h-28 animate-pulse rounded-2xl bg-slate-200 dark:bg-slate-800"
             />
           ))}
         </div>
-        <div className="h-72 animate-pulse rounded-2xl bg-slate-200 dark:bg-slate-800" />
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="h-80 animate-pulse rounded-2xl bg-slate-200 dark:bg-slate-800 lg:col-span-2" />
+          <div className="h-80 animate-pulse rounded-2xl bg-slate-200 dark:bg-slate-800" />
+        </div>
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800 dark:border-red-900/70 dark:bg-red-950/60 dark:text-red-300">
+      <div className="ui-card border-red-200 bg-red-50/70 p-6 text-sm text-red-800 dark:border-red-900/70 dark:bg-red-950/40 dark:text-red-300">
         No se pudo cargar el panel de indicadores. Verifique la conexión con la
         base de datos.
       </div>
@@ -205,408 +270,384 @@ export default function DashboardPage() {
   }
 
   const { kpis } = data;
-  const totalBuckets = Math.max(
-    1,
-    data.expiryDistribution.reduce((acc, b) => acc + b.count, 0)
+  const donutSegments: DonutSegment[] = data.expiryDistribution.map((b) => {
+    const meta = BUCKET_META[b.label] ?? {
+      stroke: "#6366f1",
+      dotClass: "bg-indigo-500",
+      href: "/inventario",
+    };
+    return {
+      label: b.label,
+      value: b.count,
+      stroke: meta.stroke,
+      dotClass: meta.dotClass,
+      href: meta.href,
+    };
+  });
+
+  const sortedCategories = [...data.categoryBreakdown].sort(
+    (a, b) => b.atRiskUnits - a.atRiskUnits || b.units - a.units
   );
 
   return (
     <div className="space-y-6">
-      {/* Encabezado y barra de acciones */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-[26px]">
-            Dashboard de Control — Corta Fecha
-          </h1>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            Visibilidad en tiempo real de vencimientos, inventario multi-empaque
-            (CJ, PC, DPL, DISP, BL, UN), inspecciones y averías.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+      <PageHeader
+        title="Dashboard de Control"
+        badge={warehouseName}
+        description="Visibilidad ejecutiva de vencimientos FEFO, stock multi-empaque, inspecciones y averías en tiempo real."
+        exports={[
+          {
+            label: "Corta Fecha",
+            href: "/api/reports/export?type=corta_fecha",
+            format: "xlsx",
+          },
+          {
+            label: "PDF",
+            href: "/api/reports/export?type=corta_fecha&format=pdf",
+            format: "pdf",
+          },
+          {
+            label: "General",
+            href: "/api/reports/export?type=general",
+            format: "xlsx",
+          },
+        ]}
+        primaryAction={
           <button
             type="button"
             onClick={handleSyncAlerts}
             disabled={syncing}
-            className="ui-btn ui-btn-primary w-full sm:w-auto"
+            className="ui-btn ui-btn-primary"
           >
-            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`}
+            />
             {syncing ? "Analizando..." : "Ejecutar Análisis"}
           </button>
-
-          <div className="grid grid-cols-3 gap-1.5 rounded-xl border border-slate-200 bg-white p-1 shadow-2xs dark:border-slate-800 dark:bg-slate-900 sm:flex sm:flex-wrap sm:items-center">
-            <a
-              href="/api/reports/export?type=corta_fecha"
-              className="ui-btn ui-btn-emerald-soft border-0 px-2 py-2 text-xs sm:px-2.5 sm:py-1.5"
-            >
-              <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">Excel</span>
-            </a>
-            <a
-              href="/api/reports/export?type=corta_fecha&format=pdf"
-              className="ui-btn ui-btn-rose-soft border-0 px-2 py-2 text-xs sm:px-2.5 sm:py-1.5"
-            >
-              <FileText className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">PDF</span>
-            </a>
-            <a
-              href="/api/reports/export?type=general"
-              className="ui-btn ui-btn-emerald px-2 py-2 text-xs sm:px-2.5 sm:py-1.5"
-            >
-              <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">General</span>
-            </a>
-          </div>
-        </div>
-      </div>
+        }
+      />
 
       {syncMsg && (
         <div
           role="status"
-          className="cf-animate-popover flex items-center gap-2.5 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-900 dark:border-indigo-800/70 dark:bg-indigo-950/60 dark:text-indigo-200"
+          className="cf-animate-popover flex items-center gap-2.5 rounded-xl border border-indigo-200 bg-indigo-50/80 px-4 py-3 text-sm font-medium text-indigo-900 dark:border-indigo-800/70 dark:bg-indigo-950/60 dark:text-indigo-200"
         >
           <CheckCircle2 className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
           <span>{syncMsg}</span>
         </div>
       )}
 
-      {/* KPIs principales */}
+      {/* KPIs principales estilo Stripe */}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-5">
-        <Link
+        <KpiCard
+          label="Riesgo Crítico (≤15d)"
+          value={kpis.expiredLotsCount + kpis.criticalLotsCount}
+          sublabel={`${kpis.expiredLotsCount} vencidos · ${kpis.criticalLotsCount} críticos`}
+          icon={<AlertOctagon className="h-4 w-4" />}
+          tone="red"
           href="/inventario?expiryWindow=critical"
-          className="ui-card-interactive group flex flex-col justify-between border-l-4 border-l-red-500 p-3.5 sm:p-4"
-        >
-          <div>
-            <div className="flex items-center justify-between gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-red-700 dark:text-red-400 sm:text-[11px]">
-                Riesgo Crítico (≤15d)
-              </span>
-              <span className="shrink-0 rounded-lg bg-red-50 p-1.5 text-red-600 dark:bg-red-950/70 dark:text-red-400">
-                <AlertOctagon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </span>
-            </div>
-            <p className="tabular-nums mt-2 text-2xl font-bold text-slate-900 dark:text-slate-100 sm:text-3xl">
-              {kpis.expiredLotsCount + kpis.criticalLotsCount}
-            </p>
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-1 text-[11px] text-slate-600 dark:text-slate-400 sm:text-xs">
-            <span className="truncate">
-              {kpis.expiredLotsCount} vencidos · {kpis.criticalLotsCount}{" "}
-              críticos
-            </span>
-            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-red-600 dark:group-hover:text-red-400" />
-          </div>
-        </Link>
-
-        <Link
+        />
+        <KpiCard
+          label="Preventivo (16–30d)"
+          value={kpis.upcoming30Count}
+          sublabel={`+${kpis.upcoming60Count} en ventana 31–60d`}
+          icon={<AlertTriangle className="h-4 w-4" />}
+          tone="amber"
           href="/inventario?expiryWindow=30"
-          className="ui-card-interactive group flex flex-col justify-between border-l-4 border-l-amber-500 p-3.5 sm:p-4"
-        >
-          <div>
-            <div className="flex items-center justify-between gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 sm:text-[11px]">
-                Preventivo (16–30d)
-              </span>
-              <span className="shrink-0 rounded-lg bg-amber-50 p-1.5 text-amber-600 dark:bg-amber-950/70 dark:text-amber-400">
-                <AlertTriangle className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </span>
-            </div>
-            <p className="tabular-nums mt-2 text-2xl font-bold text-slate-900 dark:text-slate-100 sm:text-3xl">
-              {kpis.upcoming30Count}
-            </p>
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-1 text-[11px] text-slate-600 dark:text-slate-400 sm:text-xs">
-            <span className="truncate">+{kpis.upcoming60Count} en 31–60d</span>
-            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-amber-600 dark:group-hover:text-amber-400" />
-          </div>
-        </Link>
-
-        <Link
+        />
+        <KpiCard
+          label="Inventario Activo"
+          value={kpis.totalUnits.toLocaleString("es-CO")}
+          sublabel={`${kpis.totalActiveLots} lotes · ${formatCurrencyCOP(
+            kpis.totalInventoryValue
+          )}`}
+          icon={<Boxes className="h-4 w-4" />}
+          tone="indigo"
           href="/inventario"
-          className="ui-card-interactive group flex flex-col justify-between border-l-4 border-l-indigo-500 p-3.5 sm:p-4"
-        >
-          <div>
-            <div className="flex items-center justify-between gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 sm:text-[11px]">
-                Inventario Activo
-              </span>
-              <span className="shrink-0 rounded-lg bg-indigo-50 p-1.5 text-indigo-600 dark:bg-indigo-950/70 dark:text-indigo-400">
-                <Boxes className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </span>
-            </div>
-            <p className="tabular-nums mt-2 text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl xl:text-3xl">
-              {kpis.totalUnits.toLocaleString("es-CO")}
-            </p>
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-1 text-[11px] text-slate-600 dark:text-slate-400 sm:text-xs">
-            <span className="tabular-nums truncate">
-              {kpis.totalActiveLots} lotes ·{" "}
-              {formatCurrencyCOP(kpis.totalInventoryValue)}
-            </span>
-            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-600 dark:group-hover:text-indigo-400" />
-          </div>
-        </Link>
-
-        <Link
+        />
+        <KpiCard
+          label="Averías Pendientes"
+          value={kpis.pendingDamagedCount}
+          sublabel={`Pérdida: ${formatCurrencyCOP(kpis.totalDamagedLoss)}`}
+          icon={<ShieldAlert className="h-4 w-4" />}
+          tone="orange"
           href="/averias"
-          className="ui-card-interactive group flex flex-col justify-between border-l-4 border-l-orange-500 p-3.5 sm:p-4"
-        >
-          <div>
-            <div className="flex items-center justify-between gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-orange-700 dark:text-orange-400 sm:text-[11px]">
-                Averías Pendientes
-              </span>
-              <span className="shrink-0 rounded-lg bg-orange-50 p-1.5 text-orange-600 dark:bg-orange-950/70 dark:text-orange-400">
-                <ShieldAlert className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </span>
-            </div>
-            <p className="tabular-nums mt-2 text-2xl font-bold text-slate-900 dark:text-slate-100 sm:text-3xl">
-              {kpis.pendingDamagedCount}
-            </p>
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-1 text-[11px] text-slate-600 dark:text-slate-400 sm:text-xs">
-            <span className="tabular-nums truncate">
-              Pérdida: {formatCurrencyCOP(kpis.totalDamagedLoss)}
-            </span>
-            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-orange-600 dark:group-hover:text-orange-400" />
-          </div>
-        </Link>
-
-        <Link
+        />
+        <KpiCard
+          label="Alertas Activas"
+          value={kpis.activeAlertsCount}
+          sublabel={`${kpis.totalInspectionsCount} inspecciones registradas`}
+          icon={<Bell className="h-4 w-4" />}
+          tone="sky"
           href="/alertas"
-          className="ui-card-interactive group col-span-2 flex flex-col justify-between border-l-4 border-l-slate-700 p-3.5 dark:border-l-slate-500 sm:col-span-2 sm:p-4 xl:col-span-1"
-        >
-          <div>
-            <div className="flex items-center justify-between gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 sm:text-[11px]">
-                Alertas e Inspecciones
-              </span>
-              <span className="shrink-0 rounded-lg bg-slate-100 p-1.5 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                <Bell className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </span>
-            </div>
-            <p className="tabular-nums mt-2 text-2xl font-bold text-slate-900 dark:text-slate-100 sm:text-3xl">
-              {kpis.activeAlertsCount}
-            </p>
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-1 text-[11px] text-slate-600 dark:text-slate-400 sm:text-xs">
-            <span className="tabular-nums">
-              Sin atender · {kpis.totalInspectionsCount} inspecciones
-            </span>
-            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-600 dark:group-hover:text-indigo-400" />
-          </div>
-        </Link>
+          className="col-span-2 xl:col-span-1"
+        />
       </div>
 
-      {/* Distribución por semáforo y resumen por bodega */}
+      {/* Semáforo + Categorías y Bodegas */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="ui-card p-5 lg:col-span-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                Semáforo de Vencimientos por Lote
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Distribución porcentual y cantidad de lotes activos por ventana
-              </p>
+        <div className="ui-card flex flex-col justify-between p-5 lg:col-span-2">
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Semáforo General de Vencimientos
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Distribución por ventana FEFO — pulsa un segmento para filtrar
+                  lotes
+                </p>
+              </div>
+              <Link
+                href="/inventario"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+              >
+                Ver inventario <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
             </div>
-            <Link
-              href="/inventario"
-              className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:underline dark:text-indigo-400"
-            >
-              Ver inventario completo <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
+
+            <div className="mt-5">
+              <ExpiryDonutChart
+                segments={donutSegments}
+                centerValue={kpis.totalActiveLots}
+                centerLabel="Lotes activos"
+              />
+            </div>
           </div>
 
-          <div className="mt-4 flex h-4 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200/70 dark:bg-slate-800 dark:ring-slate-700">
-            {data.expiryDistribution.map((item) => {
-              const pct = (item.count / totalBuckets) * 100;
-              if (pct <= 0) return null;
-              return (
-                <div
-                  key={item.label}
-                  className={`${item.color} transition-all duration-300`}
-                  style={{ width: `${pct}%` }}
-                  title={`${item.label}: ${item.count} lotes (${Math.round(pct)}%)`}
-                />
-              );
-            })}
-          </div>
+          <div className="mt-6 border-t border-slate-100 pt-5 dark:border-slate-800">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-slate-400" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Distribución por Categoría (en riesgo ≤30d vs. total)
+                </h3>
+              </div>
+              <span className="tabular-nums text-[11px] text-slate-400">
+                {sortedCategories.length} categorías
+              </span>
+            </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-5 sm:gap-3">
-            {data.expiryDistribution.map((item) => {
-              const pct = Math.round((item.count / totalBuckets) * 100);
-              return (
-                <div
-                  key={item.label}
-                  className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 transition-colors last:col-span-2 hover:bg-white dark:border-slate-800 dark:bg-slate-800/50 dark:hover:bg-slate-800 sm:last:col-span-1"
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.color}`}
-                    />
-                    <span className="truncate text-xs font-medium text-slate-600 dark:text-slate-300">
-                      {item.label}
-                    </span>
-                  </div>
-                  <div className="mt-1.5 flex items-baseline justify-between">
-                    <p className="tabular-nums text-xl font-bold text-slate-900 dark:text-slate-100">
-                      {item.count}
-                    </p>
-                    <span className="tabular-nums text-[11px] font-medium text-slate-400">
-                      {pct}%
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Exposición por Categoría (unidades totales vs. ≤30 días)
-            </h3>
-            <div className="mt-3 space-y-3">
-              {data.categoryBreakdown.map((cat) => {
-                const riskPct =
-                  cat.units > 0
-                    ? Math.round((cat.atRiskUnits / cat.units) * 100)
-                    : 0;
-                const barColor =
-                  riskPct >= 50
-                    ? "bg-red-500"
-                    : riskPct >= 20
-                    ? "bg-amber-500"
-                    : "bg-emerald-500";
-                return (
-                  <div key={cat.category} className="space-y-1">
-                    <div className="flex flex-wrap justify-between gap-2 text-xs">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">
-                        {cat.category}
-                      </span>
-                      <span className="tabular-nums text-slate-600 dark:text-slate-400">
-                        <strong className="text-slate-900 dark:text-slate-100">
-                          {cat.atRiskUnits.toLocaleString("es-CO")}
-                        </strong>{" "}
-                        u. en riesgo de {cat.units.toLocaleString("es-CO")} u. (
-                        {riskPct}%)
-                      </span>
+            {sortedCategories.length === 0 ? (
+              <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                No hay categorías con stock activo.
+              </p>
+            ) : (
+              <div className="mt-3 max-h-56 space-y-3 overflow-y-auto pr-1">
+                {sortedCategories.map((cat) => {
+                  const riskPct =
+                    cat.units > 0
+                      ? Math.round((cat.atRiskUnits / cat.units) * 100)
+                      : 0;
+                  const barColor =
+                    riskPct >= 50
+                      ? "bg-red-500"
+                      : riskPct >= 20
+                      ? "bg-amber-500"
+                      : "bg-emerald-500";
+                  return (
+                    <div key={cat.category} className="space-y-1">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">
+                          {cat.category}
+                        </span>
+                        <span className="tabular-nums text-slate-500 dark:text-slate-400">
+                          <strong className="text-slate-900 dark:text-slate-100">
+                            {cat.atRiskUnits.toLocaleString("es-CO")}
+                          </strong>{" "}
+                          / {cat.units.toLocaleString("es-CO")} u. ({riskPct}%)
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${barColor}`}
+                          style={{ width: `${Math.min(100, riskPct)}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                      <div
-                        className={`h-full rounded-full transition-all duration-300 ${barColor}`}
-                        style={{ width: `${Math.min(100, riskPct)}%` }}
-                      />
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Estado por Bodega + Inspecciones recientes */}
+        <div className="flex flex-col gap-6">
+          <div className="ui-card p-5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/70 dark:text-indigo-400">
+                  <Warehouse className="h-4 w-4" />
+                </span>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                    Estado por Bodega
+                  </h2>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Consolidado físico y urgencia
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {data.warehouseSummary.map((wh) => {
+                const urgentRatio =
+                  wh.totalLots > 0
+                    ? Math.round((wh.urgentLots / wh.totalLots) * 100)
+                    : 0;
+                return (
+                  <div
+                    key={wh.id}
+                    className="rounded-xl border border-slate-200/90 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-900/60"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                          {wh.name}
+                        </p>
+                        <p className="font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                          {wh.code}
+                        </p>
+                      </div>
+                      {wh.urgentLots > 0 ? (
+                        <span className="tabular-nums rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-[11px] font-semibold text-red-700 dark:border-red-900/70 dark:bg-red-950/60 dark:text-red-300">
+                          {wh.urgentLots} urgentes
+                        </span>
+                      ) : (
+                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/60 dark:text-emerald-300">
+                          Al día
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-200/70 pt-2.5 text-xs dark:border-slate-800">
+                      <div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Lotes
+                        </p>
+                        <p className="tabular-nums font-bold text-slate-900 dark:text-slate-100">
+                          {wh.totalLots}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Unidades
+                        </p>
+                        <p className="tabular-nums font-bold text-slate-900 dark:text-slate-100">
+                          {wh.totalUnits.toLocaleString("es-CO")}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          En riesgo
+                        </p>
+                        <p className="tabular-nums font-bold text-slate-900 dark:text-slate-100">
+                          {urgentRatio}%
+                        </p>
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div>
           </div>
-        </div>
 
-        {/* Bodegas */}
-        <div className="ui-card p-5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className="rounded-lg bg-indigo-50 p-1.5 text-indigo-600 dark:bg-indigo-950/70 dark:text-indigo-400">
-                <Warehouse className="h-4 w-4" />
-              </span>
-              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                Estado por Bodega
-              </h2>
-            </div>
-          </div>
-          <div className="mt-4 space-y-3">
-            {data.warehouseSummary.map((wh) => (
-              <div
-                key={wh.id}
-                className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 transition-colors hover:border-indigo-200 hover:bg-white dark:border-slate-800 dark:bg-slate-800/50 dark:hover:border-indigo-500/40 dark:hover:bg-slate-800"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                      {wh.name}
-                    </p>
-                    <p className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                      {wh.code}
-                    </p>
-                  </div>
-                  {wh.urgentLots > 0 ? (
-                    <span className="tabular-nums rounded-full border border-red-200 bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700 dark:border-red-800/70 dark:bg-red-950/60 dark:text-red-300">
-                      {wh.urgentLots} urgentes
-                    </span>
-                  ) : (
-                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:border-emerald-800/70 dark:bg-emerald-950/60 dark:text-emerald-300">
-                      Al día
-                    </span>
-                  )}
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200/70 pt-3 text-xs dark:border-slate-700">
-                  <div>
-                    <p className="text-slate-500 dark:text-slate-400">
-                      Lotes activos
-                    </p>
-                    <p className="tabular-nums font-bold text-slate-900 dark:text-slate-100">
-                      {wh.totalLots}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-slate-500 dark:text-slate-400">
-                      Unidades totales
-                    </p>
-                    <p className="tabular-nums font-bold text-slate-900 dark:text-slate-100">
-                      {wh.totalUnits.toLocaleString("es-CO")} u.
-                    </p>
-                  </div>
-                </div>
+          <div className="ui-card flex-1 p-5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-50 text-teal-600 dark:bg-teal-950/70 dark:text-teal-400">
+                  <ClipboardCheck className="h-4 w-4" />
+                </span>
+                <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Últimas Inspecciones
+                </h2>
               </div>
-            ))}
+              <Link
+                href="/inspecciones"
+                className="text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+              >
+                Ver todas →
+              </Link>
+            </div>
+            <div className="mt-3 space-y-2">
+              {!data.recentInspections || data.recentInspections.length === 0 ? (
+                <p className="py-4 text-center text-xs text-slate-500 dark:text-slate-400">
+                  Sin inspecciones registradas aún.
+                </p>
+              ) : (
+                data.recentInspections.slice(0, 4).map((insp) => (
+                  <div
+                    key={insp.id}
+                    className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-900/50"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-slate-800 dark:text-slate-200">
+                        {insp.lot
+                          ? `${insp.lot.product.name}`
+                          : "Inspección general"}
+                      </p>
+                      <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
+                        {INSPECTION_TYPE_LABELS[insp.inspectionType] ??
+                          insp.inspectionType}{" "}
+                        · {insp.inspectorName}
+                      </p>
+                    </div>
+                    <InspectionStatusBadge status={insp.status} />
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Lotes prioritarios FEFO */}
       <div className="ui-card overflow-hidden">
-        <div className="flex flex-col gap-2 border-b border-slate-200 px-5 py-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
-              Lotes Prioritarios (Vencidos, ≤45 días o en Cuarentena)
+              Lotes Prioritarios FEFO
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Ordenados por fecha de vencimiento más próxima (criterio FEFO).
+              Vencidos, próximos ≤45 días o en cuarentena. Pulsa un lote para
+              abrir su ficha operativa.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-            <a
-              href="/api/reports/export?type=expiring&days=30"
-              className="ui-btn ui-btn-emerald-soft py-2 text-xs sm:py-1.5"
-            >
-              <FileSpreadsheet className="h-4 w-4 shrink-0" />
-              <span className="truncate">Excel próximos ≤30d</span>
-            </a>
-            <a
-              href="/api/reports/export?type=expiring&days=30&format=pdf"
-              className="ui-btn ui-btn-rose-soft py-2 text-xs sm:py-1.5"
-            >
-              <FileText className="h-4 w-4 shrink-0" />
-              <span className="truncate">PDF próximos ≤30d</span>
-            </a>
-          </div>
+          <ExportActions
+            items={[
+              {
+                label: "Excel ≤30d",
+                href: "/api/reports/export?type=expiring&days=30",
+                format: "xlsx",
+              },
+              {
+                label: "PDF ≤30d",
+                href: "/api/reports/export?type=expiring&days=30&format=pdf",
+                format: "pdf",
+              },
+            ]}
+          />
         </div>
 
         {/* Vista móvil en tarjetas */}
         <div className="divide-y divide-slate-100 dark:divide-slate-800 md:hidden">
           {data.urgentLots.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-              No hay lotes críticos o próximos a vencer en este momento.
-            </div>
+            <EmptyState
+              icon={<Package className="h-6 w-6" />}
+              title="Sin lotes prioritarios"
+              description="No hay lotes vencidos, críticos ni en cuarentena en este momento."
+            />
           ) : (
             data.urgentLots.map((lot) => (
               <div key={lot.id} className="space-y-3 p-4">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLot(lot)}
+                    className="min-w-0 text-left"
+                  >
                     <p className="font-mono text-xs font-bold text-indigo-700 dark:text-indigo-400">
                       {lot.product.sku} · Lote {lot.lotNumber}
                     </p>
@@ -617,11 +658,11 @@ export default function DashboardPage() {
                       {lot.warehouse.name}
                       {lot.locationCode ? ` · ${lot.locationCode}` : ""}
                     </p>
-                  </div>
+                  </button>
                   <LotStatusBadge status={lot.status} />
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs dark:bg-slate-800/60">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs dark:bg-slate-800/60">
                   <div>
                     <p className="font-semibold text-slate-900 dark:text-slate-100">
                       {lot.quantityText}
@@ -633,7 +674,7 @@ export default function DashboardPage() {
                     )}
                   </div>
                   <div className="flex flex-col items-end gap-1">
-                    <span className="font-medium text-slate-700 dark:text-slate-300">
+                    <span className="tabular-nums font-medium text-slate-700 dark:text-slate-300">
                       {formatExpiryLabel(
                         lot.expiryDate,
                         lot.expiryPrecision,
@@ -644,17 +685,25 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLot(lot)}
+                    className="ui-btn ui-btn-secondary py-1.5 text-xs"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    Ficha
+                  </button>
                   <Link
                     href={`/inspecciones?lotId=${lot.id}`}
                     className="ui-btn ui-btn-secondary py-1.5 text-xs"
                   >
                     <ClipboardCheck className="h-3.5 w-3.5" />
-                    Inspeccionar
+                    Inspec.
                   </Link>
                   <Link
                     href={`/averias?lotId=${lot.id}`}
-                    className="ui-btn border border-orange-200 bg-orange-50 py-1.5 text-xs text-orange-800 hover:bg-orange-100 dark:border-orange-900/70 dark:bg-orange-950/50 dark:text-orange-300 dark:hover:bg-orange-950"
+                    className="ui-btn ui-btn-secondary py-1.5 text-xs text-orange-700 dark:text-orange-300"
                   >
                     <ShieldAlert className="h-3.5 w-3.5" />
                     Avería
@@ -671,9 +720,9 @@ export default function DashboardPage() {
             <thead className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-400">
               <tr>
                 <th className="px-4 py-3">Código / Producto</th>
-                <th className="px-4 py-3">Lote y Bodega</th>
-                <th className="px-4 py-3">Cantidad Reportada</th>
-                <th className="px-4 py-3">Fecha Vencimiento</th>
+                <th className="px-4 py-3">Lote y Ubicación</th>
+                <th className="px-4 py-3">Cantidad</th>
+                <th className="px-4 py-3">Vencimiento</th>
                 <th className="px-4 py-3">Estado</th>
                 <th className="px-4 py-3 text-right">Acciones</th>
               </tr>
@@ -682,7 +731,8 @@ export default function DashboardPage() {
               {data.urgentLots.map((lot) => (
                 <tr
                   key={lot.id}
-                  className="transition-colors hover:bg-slate-50/90 dark:hover:bg-slate-800/50"
+                  onClick={() => setSelectedLot(lot)}
+                  className="cursor-pointer transition-colors hover:bg-slate-50/90 dark:hover:bg-slate-800/50"
                 >
                   <td className="px-4 py-3.5">
                     <p className="font-mono text-xs font-bold text-indigo-700 dark:text-indigo-400">
@@ -719,11 +769,6 @@ export default function DashboardPage() {
                           lot.expiryPrecision,
                           lot.expiryDisplay
                         )}
-                        {lot.expiryPrecision === "MES_ANO" && (
-                          <span className="ml-1 rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                            Mes/Año
-                          </span>
-                        )}
                       </span>
                       <DaysRemainingBadge days={lot.daysToExpiry} />
                     </div>
@@ -731,8 +776,11 @@ export default function DashboardPage() {
                   <td className="px-4 py-3.5">
                     <LotStatusBadge status={lot.status} />
                   </td>
-                  <td className="px-4 py-3.5 text-right">
-                    <div className="flex justify-end gap-2">
+                  <td
+                    className="px-4 py-3.5 text-right"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex justify-end gap-1.5">
                       <Link
                         href={`/inspecciones?lotId=${lot.id}`}
                         className="ui-btn ui-btn-secondary px-2.5 py-1.5 text-xs"
@@ -742,7 +790,7 @@ export default function DashboardPage() {
                       </Link>
                       <Link
                         href={`/averias?lotId=${lot.id}`}
-                        className="ui-btn border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-xs text-orange-800 hover:bg-orange-100 dark:border-orange-900/70 dark:bg-orange-950/50 dark:text-orange-300 dark:hover:bg-orange-950"
+                        className="ui-btn ui-btn-secondary px-2.5 py-1.5 text-xs text-orange-700 hover:border-orange-300 hover:bg-orange-50 dark:text-orange-300 dark:hover:bg-orange-950/40"
                       >
                         <ShieldAlert className="h-3.5 w-3.5" />
                         Avería
@@ -753,11 +801,12 @@ export default function DashboardPage() {
               ))}
               {data.urgentLots.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400"
-                  >
-                    No hay lotes críticos o próximos a vencer en este momento.
+                  <td colSpan={6}>
+                    <EmptyState
+                      icon={<Package className="h-6 w-6" />}
+                      title="Sin lotes prioritarios"
+                      description="No hay lotes críticos o próximos a vencer en este momento."
+                    />
                   </td>
                 </tr>
               )}
@@ -766,16 +815,16 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Alertas activas y actividad reciente */}
+      {/* Alertas pendientes y actividad reciente */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="ui-card p-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="rounded-lg bg-red-50 p-1.5 text-red-600 dark:bg-red-950/70 dark:text-red-400">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600 dark:bg-red-950/70 dark:text-red-400">
                 <Bell className="h-4 w-4" />
               </span>
               <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                Alertas Automáticas Activas
+                Alertas Pendientes
               </h2>
             </div>
             <Link
@@ -789,7 +838,7 @@ export default function DashboardPage() {
             {data.activeAlerts.map((alert) => (
               <div
                 key={alert.id}
-                className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5 transition-colors hover:bg-white dark:border-slate-800 dark:bg-slate-800/50 dark:hover:bg-slate-800"
+                className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5 transition-colors hover:bg-white dark:border-slate-800 dark:bg-slate-900/50 dark:hover:bg-slate-800/70"
               >
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -803,9 +852,11 @@ export default function DashboardPage() {
               </div>
             ))}
             {data.activeAlerts.length === 0 && (
-              <div className="rounded-xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                Todas las alertas han sido atendidas.
-              </div>
+              <EmptyState
+                icon={<CheckCircle2 className="h-6 w-6 text-emerald-500" />}
+                title="Todo al día"
+                description="Todas las alertas han sido atendidas."
+              />
             )}
           </div>
         </div>
@@ -813,11 +864,11 @@ export default function DashboardPage() {
         <div className="ui-card p-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="rounded-lg bg-indigo-50 p-1.5 text-indigo-600 dark:bg-indigo-950/70 dark:text-indigo-400">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/70 dark:text-indigo-400">
                 <History className="h-4 w-4" />
               </span>
               <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                Historial Reciente de Operaciones
+                Actividad Reciente
               </h2>
             </div>
             <Link
@@ -827,28 +878,139 @@ export default function DashboardPage() {
               Ver auditoría →
             </Link>
           </div>
-          <div className="mt-4 divide-y divide-slate-100 dark:divide-slate-800">
-            {data.recentActivity.map((act) => (
-              <div
-                key={act.id}
-                className="flex items-start justify-between gap-3 py-2.5 first:pt-0 last:pb-0"
-              >
-                <div className="min-w-0">
-                  <p className="break-words text-xs font-medium text-slate-900 dark:text-slate-100">
-                    {act.summary}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                    {act.actor} · {act.entityType}
-                  </p>
-                </div>
-                <span className="tabular-nums shrink-0 text-[11px] text-slate-400 dark:text-slate-500">
-                  {formatDateTimeES(act.createdAt)}
-                </span>
-              </div>
-            ))}
+          <div className="mt-4">
+            {data.recentActivity.length === 0 ? (
+              <EmptyState
+                icon={<History className="h-6 w-6" />}
+                title="Sin actividad reciente"
+              />
+            ) : (
+              <ol className="relative ml-2 space-y-3 border-l border-slate-200 pl-4 dark:border-slate-800">
+                {data.recentActivity.slice(0, 8).map((act) => (
+                  <li key={act.id} className="relative">
+                    <span className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-indigo-500 dark:border-[#111622]" />
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="break-words text-xs font-medium text-slate-900 dark:text-slate-100">
+                          {act.summary}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                          {act.actor} · {act.entityType}
+                        </p>
+                      </div>
+                      <span className="tabular-nums shrink-0 text-[11px] text-slate-400 dark:text-slate-500">
+                        {formatDateTimeES(act.createdAt)}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Ficha rápida de Lote Prioritario */}
+      <DetailDrawer
+        open={Boolean(selectedLot)}
+        onClose={() => setSelectedLot(null)}
+        title={selectedLot ? `Lote ${selectedLot.lotNumber}` : ""}
+        subtitle={
+          selectedLot
+            ? `${selectedLot.product.sku} — ${selectedLot.product.name}`
+            : undefined
+        }
+        icon={<Package className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />}
+        badge={
+          selectedLot && (
+            <>
+              <LotStatusBadge status={selectedLot.status} />
+              <DaysRemainingBadge days={selectedLot.daysToExpiry} />
+            </>
+          )
+        }
+        footer={
+          selectedLot && (
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+              <Link
+                href={`/inspecciones?lotId=${selectedLot.id}`}
+                className="ui-btn ui-btn-secondary text-xs"
+              >
+                <ClipboardCheck className="h-3.5 w-3.5" />
+                Inspeccionar
+              </Link>
+              <Link
+                href={`/averias?lotId=${selectedLot.id}`}
+                className="ui-btn ui-btn-secondary text-xs text-orange-700 dark:text-orange-300"
+              >
+                <ShieldAlert className="h-3.5 w-3.5" />
+                Reportar avería
+              </Link>
+              <Link
+                href={`/inventario?lotId=${selectedLot.id}`}
+                className="ui-btn ui-btn-primary col-span-2 text-xs sm:col-span-1"
+              >
+                Abrir en Inventario
+              </Link>
+            </div>
+          )
+        }
+      >
+        {selectedLot && (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-xs dark:border-slate-800 dark:bg-slate-900/50">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Stock Reportado
+                </p>
+                <p className="mt-1 text-sm font-bold text-slate-900 dark:text-slate-100">
+                  {selectedLot.quantityText}
+                </p>
+                <p className="tabular-nums text-[11px] text-slate-500">
+                  {selectedLot.totalUnits} u. equivalentes
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Vencimiento
+                </p>
+                <p className="tabular-nums mt-1 text-sm font-bold text-slate-900 dark:text-slate-100">
+                  {formatExpiryLabel(
+                    selectedLot.expiryDate,
+                    selectedLot.expiryPrecision,
+                    selectedLot.expiryDisplay
+                  )}
+                </p>
+                <p className="flex items-center gap-1 text-[11px] text-slate-500">
+                  <MapPin className="h-3 w-3" />
+                  {selectedLot.warehouse.name}
+                  {selectedLot.locationCode
+                    ? ` · ${selectedLot.locationCode}`
+                    : ""}
+                </p>
+              </div>
+            </div>
+
+            {selectedLot.notes && (
+              <div className="rounded-xl border border-slate-200 p-3 text-xs dark:border-slate-800">
+                <p className="font-semibold text-slate-700 dark:text-slate-300">
+                  Observaciones
+                </p>
+                <p className="mt-1 text-slate-600 dark:text-slate-400">
+                  {selectedLot.notes}
+                </p>
+              </div>
+            )}
+
+            <div>
+              <h3 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Trazabilidad del Lote
+              </h3>
+              <EntityTimeline entityId={selectedLot.id} />
+            </div>
+          </div>
+        )}
+      </DetailDrawer>
     </div>
   );
 }

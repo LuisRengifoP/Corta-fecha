@@ -59,7 +59,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body className="min-h-screen antialiased">
+      <body className="min-h-screen font-sans antialiased">
         <ThemeProvider>
           <ToastProvider>
             <AppShell>{children}</AppShell>

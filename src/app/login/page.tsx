@@ -3,7 +3,6 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { invalidateCache } from "@/lib/client-cache";
 import {
   CheckCircle2,
   Eye,
@@ -15,6 +14,7 @@ import {
   Warehouse,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { invalidateCache } from "@/lib/client-cache";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -51,52 +51,50 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-100 via-indigo-50/40 to-slate-200 p-4 dark:from-slate-950 dark:via-slate-900 dark:to-indigo-950/60">
+    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[var(--cf-bg)] px-4 py-10">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(79,70,229,0.08),transparent_55%)] dark:bg-[radial-gradient(ellipse_at_top,_rgba(99,102,241,0.14),transparent_55%)]"
+      />
+
       <div className="fixed right-4 top-4 z-10">
         <ThemeToggle />
       </div>
 
-      <div className="cf-animate-modal w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
-        {/* Cabecera corporativa */}
-        <div className="border-b border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950 px-6 py-6 text-white">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-            <div className="w-fit overflow-hidden rounded-xl bg-white px-2.5 py-1.5 shadow-md">
-              <Image
-                src="/images/distrimarcas-logo.jpg"
-                alt="Distrimarcas S.A.S."
-                width={1024}
-                height={341}
-                priority
-                className="h-10 w-auto max-w-[140px] object-contain"
-              />
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-indigo-300">
-                Distrimarcas S.A.S.
-              </p>
-              <h1 className="text-xl font-bold tracking-tight">
-                Sistema Corta Fecha
-              </h1>
-            </div>
+      <div className="cf-animate-modal relative w-full max-w-md space-y-5">
+        <div className="flex flex-col items-center text-center">
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-xs dark:border-slate-800">
+            <Image
+              src="/images/distrimarcas-logo.jpg"
+              alt="Distrimarcas S.A.S."
+              width={1024}
+              height={341}
+              priority
+              className="h-9 w-auto max-w-[150px] object-contain"
+            />
           </div>
-          <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/10 px-3 py-1.5 text-xs text-slate-200">
-            <Warehouse className="h-3.5 w-3.5 text-indigo-300" />
-            <span>Bodega Única — Control de Vencimientos y Averías</span>
-          </div>
+          <h1 className="mt-4 text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+            Sistema Corta Fecha
+          </h1>
+          <p className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+            <Warehouse className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+            Control de Inventario, Vencimientos y Bodegas
+          </p>
         </div>
 
-        {/* Formulario de acceso */}
-        <div className="p-6 sm:p-7">
-          <div className="flex items-start justify-between gap-2">
+        <div className="ui-card overflow-hidden p-6 sm:p-7">
+          <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-4 dark:border-slate-800">
             <div>
               <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                Inicio de Sesión
+                Iniciar Sesión
               </h2>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Acceso exclusivo para la persona encargada del control de bodega.
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                Acceso operativo para gestión de bodega Distrimarcas S.A.S.
               </p>
             </div>
-            <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
+              <ShieldCheck className="h-4 w-4" />
+            </span>
           </div>
 
           {error && (
@@ -117,7 +115,7 @@ export default function LoginPage() {
                 Usuario
               </label>
               <div className="relative mt-1.5">
-                <User className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
                   id="login-username"
                   type="text"
@@ -139,7 +137,7 @@ export default function LoginPage() {
                 Contraseña
               </label>
               <div className="relative mt-1.5">
-                <Lock className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
                   id="login-password"
                   type={showPassword ? "text" : "password"}
@@ -153,7 +151,7 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
-                  className="absolute right-2.5 top-2 rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
                   aria-label="Mostrar u ocultar contraseña"
                 >
                   {showPassword ? (
@@ -174,7 +172,6 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Nota rápida informativa en Login */}
           <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
             <button
               type="button"
@@ -192,7 +189,7 @@ export default function LoginPage() {
                 <p className="font-semibold text-slate-900 dark:text-slate-100">
                   Módulos disponibles al ingresar:
                 </p>
-                <ul className="space-y-1">
+                <ul className="space-y-1.5">
                   <li className="flex items-start gap-1.5">
                     <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
                     <span>
@@ -210,8 +207,7 @@ export default function LoginPage() {
                   <li className="flex items-start gap-1.5">
                     <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
                     <span>
-                      Planillas oficiales Distrimarcas en Excel/PDF y burbuja de
-                      guía interactiva.
+                      Planillas oficiales Distrimarcas en Excel y PDF.
                     </span>
                   </li>
                 </ul>

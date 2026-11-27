@@ -1,22 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertOctagon,
   AlertTriangle,
   Bell,
   CheckCircle2,
   ClipboardCheck,
+  Eye,
   RefreshCw,
   Send,
   ShieldAlert,
   Trash2,
+  UserCheck,
 } from "lucide-react";
 import { useAppSession } from "@/components/AppSessionContext";
 import { Modal } from "@/components/Modal";
 import { Pagination, paginateItems } from "@/components/Pagination";
 import { SeverityBadge } from "@/components/StatusBadge";
 import { useToast } from "@/components/ToastProvider";
+import { DetailDrawer } from "@/components/ui/DetailDrawer";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { EntityTimeline } from "@/components/ui/EntityTimeline";
+import { FilterToolbar } from "@/components/ui/FilterToolbar";
+import { KpiCard } from "@/components/ui/KpiCard";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { fetchWithCache, getCached, invalidateCache } from "@/lib/client-cache";
 import { ALERT_TYPE_LABELS, formatDateTimeES } from "@/lib/constants";
 
@@ -62,10 +71,11 @@ interface AlertsResponse {
 
 export default function AlertasPage() {
   const { notify } = useToast();
-  const { user, refreshAlertsCount } = useAppSession();
+  const { user, warehouseName, refreshAlertsCount } = useAppSession();
   const [actorName, setActorName] = useState(
     () => user?.fullName || "Encargada Distrimarcas"
   );
+  const [editingActor, setEditingActor] = useState(false);
 
   useEffect(() => {
     if (user?.fullName) {
@@ -77,6 +87,7 @@ export default function AlertasPage() {
 
   const [showAcknowledged, setShowAcknowledged] = useState(false);
   const [severityFilter, setSeverityFilter] = useState("");
+  const [search, setSearch] = useState("");
   const [alerts, setAlerts] = useState<AlertItem[]>(
     () => getCached<AlertsResponse>("alerts:false:")?.alerts ?? []
   );
@@ -89,6 +100,7 @@ export default function AlertasPage() {
   const [sendingTelegram, setSendingTelegram] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
+  const [selectedAlert, setSelectedAlert] = useState<AlertItem | null>(null);
   const [deletingAlert, setDeletingAlert] = useState<AlertItem | null>(null);
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [banner, setBanner] = useState<{
@@ -162,7 +174,11 @@ export default function AlertasPage() {
       if (!res.ok) {
         const errText = j.error || "No se pudo ejecutar el escaneo de alertas.";
         setBanner({ type: "warn", text: errText });
-        notify({ title: "Error en escaneo", description: errText, variant: "error" });
+        notify({
+          title: "Error en escaneo",
+          description: errText,
+          variant: "error",
+        });
         return;
       }
       const tgInfo = j.result.telegramResult;
@@ -181,7 +197,11 @@ export default function AlertasPage() {
     } catch {
       const errText = "Error de conexión al ejecutar el escaneo automático.";
       setBanner({ type: "warn", text: errText });
-      notify({ title: "Error de conexión", description: errText, variant: "error" });
+      notify({
+        title: "Error de conexión",
+        description: errText,
+        variant: "error",
+      });
     } finally {
       setSyncing(false);
     }
@@ -232,7 +252,11 @@ export default function AlertasPage() {
     } catch {
       const errText = "Error de conexión al enviar notificación por Telegram.";
       setBanner({ type: "warn", text: errText });
-      notify({ title: "Error de conexión", description: errText, variant: "error" });
+      notify({
+        title: "Error de conexión",
+        description: errText,
+        variant: "error",
+      });
     } finally {
       setSendingTelegram(false);
     }
@@ -256,6 +280,9 @@ export default function AlertasPage() {
             : "Alerta reabierta",
           variant: "success",
         });
+        if (selectedAlert?.id === id) {
+          setSelectedAlert(null);
+        }
         await reloadAfterMutation();
       } else {
         notify({
@@ -284,6 +311,9 @@ export default function AlertasPage() {
         { method: "DELETE" }
       );
       if (res.ok) {
+        if (selectedAlert?.id === deletingAlert.id) {
+          setSelectedAlert(null);
+        }
         setDeletingAlert(null);
         notify({
           title: "Alerta eliminada",
@@ -294,7 +324,11 @@ export default function AlertasPage() {
         const json = await res.json().catch(() => ({}));
         const errText = json.error || "No se pudo eliminar la alerta.";
         setBanner({ type: "warn", text: errText });
-        notify({ title: "Error al eliminar", description: errText, variant: "error" });
+        notify({
+          title: "Error al eliminar",
+          description: errText,
+          variant: "error",
+        });
         setDeletingAlert(null);
       }
     } catch {
@@ -308,48 +342,69 @@ export default function AlertasPage() {
     }
   };
 
-  const pagedAlerts = paginateItems(alerts, page, pageSize);
+  const visibleAlerts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return alerts;
+    return alerts.filter((a) =>
+      `${a.title} ${a.message} ${a.lot?.lotNumber ?? ""} ${
+        a.lot?.product.sku ?? ""
+      } ${a.lot?.product.name ?? ""}`
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [alerts, search]);
+
+  const summary = useMemo(() => {
+    let high = 0;
+    let medium = 0;
+    let notified = 0;
+    for (const a of visibleAlerts) {
+      if (a.severity === "ALTA") high++;
+      else if (a.severity === "MEDIA") medium++;
+      if (a.emailSentAt) notified++;
+    }
+    return { total: visibleAlerts.length, high, medium, notified };
+  }, [visibleAlerts]);
+
+  const pagedAlerts = paginateItems(visibleAlerts, page, pageSize);
+  const hasActiveFilters = Boolean(search || severityFilter);
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            Alertas Preventivas Automáticas
-          </h1>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            Detección automática de lotes vencidos, críticos (≤15 días) y
-            próximos a vencer (≤60 días) con envío automático a Telegram.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+      <PageHeader
+        title="Alertas Automáticas"
+        badge={warehouseName}
+        description="Seguimiento por prioridad de vencimientos ≤60 días, lotes vencidos y notificaciones automáticas a Telegram."
+        secondaryActions={
           <button
             type="button"
             onClick={handleSendSummaryTelegram}
             disabled={sendingTelegram}
-            className="ui-btn ui-btn-secondary w-full border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 dark:border-sky-900/70 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-950 sm:w-auto"
+            className="ui-btn ui-btn-secondary"
           >
             <Send className="h-4 w-4 text-sky-600 dark:text-sky-400" />
-            {sendingTelegram ? "Enviando..." : "Enviar resumen por Telegram"}
+            {sendingTelegram ? "Enviando..." : "Enviar resumen Telegram"}
           </button>
+        }
+        primaryAction={
           <button
             type="button"
             onClick={handleSync}
             disabled={syncing}
-            className="ui-btn ui-btn-primary w-full sm:w-auto"
+            className="ui-btn ui-btn-primary"
           >
             <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Escaneando inventario..." : "Ejecutar Escaneo Automático"}
+            {syncing ? "Escaneando..." : "Ejecutar Escaneo"}
           </button>
-        </div>
-      </div>
+        }
+      />
 
       {telegramConfig && (
-        <div className="flex flex-col gap-1.5 rounded-xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-xs text-sky-900 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-200 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-1.5 rounded-xl border border-sky-200/80 bg-sky-50/70 px-4 py-2.5 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/35 dark:text-sky-200 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
-            <Send className="h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" />
+            <Send className="h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-400" />
             <span>
-              Telegram Bot para alertas automáticas (≤ 60 días):{" "}
+              Canal Telegram Bot:{" "}
               <strong className="font-semibold">
                 {telegramConfig.configured
                   ? `Chat ${telegramConfig.displayRecipient}`
@@ -357,10 +412,10 @@ export default function AlertasPage() {
               </strong>
             </span>
           </div>
-          <span className="font-medium text-sky-800 dark:text-sky-300">
+          <span className="font-medium text-sky-700 dark:text-sky-300">
             {telegramConfig.configured
-              ? "Envío automático activo al detectar productos próximos a vencer"
-              : "Agrega TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID en .env / Vercel"}
+              ? "Notificación automática activa para lotes ≤60 días"
+              : "Agrega TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID"}
           </span>
         </div>
       )}
@@ -379,40 +434,106 @@ export default function AlertasPage() {
         </div>
       )}
 
-      {/* Barra de control */}
-      <div className="ui-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="grid w-full grid-cols-2 rounded-xl bg-slate-100 p-1 dark:bg-slate-800 sm:inline-flex sm:w-auto">
-          <button
-            type="button"
-            onClick={() => {
-              setShowAcknowledged(false);
-              setPage(1);
-            }}
-            className={`rounded-lg px-3 py-2 text-xs font-semibold transition-all sm:px-3.5 sm:py-1.5 sm:text-sm ${
-              !showAcknowledged
-                ? "bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-100"
-                : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
-            }`}
-          >
-            Pendientes
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowAcknowledged(true);
-              setPage(1);
-            }}
-            className={`rounded-lg px-3 py-2 text-xs font-semibold transition-all sm:px-3.5 sm:py-1.5 sm:text-sm ${
-              showAcknowledged
-                ? "bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-slate-100"
-                : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
-            }`}
-          >
-            Atendidas
-          </button>
-        </div>
+      {/* Resumen de alertas por prioridad */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        <KpiCard
+          label={showAcknowledged ? "Atendidas" : "Pendientes"}
+          value={summary.total}
+          sublabel="Alertas en esta vista"
+          icon={<Bell className="h-4 w-4" />}
+          tone="indigo"
+          onClick={() => {
+            setSeverityFilter("");
+            setPage(1);
+          }}
+          active={severityFilter === ""}
+        />
+        <KpiCard
+          label="Prioridad Alta"
+          value={summary.high}
+          sublabel="Vencidos o ≤15 días"
+          icon={<AlertOctagon className="h-4 w-4" />}
+          tone="red"
+          onClick={() => {
+            setSeverityFilter(severityFilter === "ALTA" ? "" : "ALTA");
+            setPage(1);
+          }}
+          active={severityFilter === "ALTA"}
+        />
+        <KpiCard
+          label="Prioridad Media"
+          value={summary.medium}
+          sublabel="Preventivos 16–60 días"
+          icon={<AlertTriangle className="h-4 w-4" />}
+          tone="amber"
+          onClick={() => {
+            setSeverityFilter(severityFilter === "MEDIA" ? "" : "MEDIA");
+            setPage(1);
+          }}
+          active={severityFilter === "MEDIA"}
+        />
+        <KpiCard
+          label="Notificadas"
+          value={summary.notified}
+          sublabel="Enviadas vía Telegram"
+          icon={<Send className="h-4 w-4" />}
+          tone="sky"
+        />
+      </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      {/* Barra de filtros */}
+      <FilterToolbar
+        searchValue={search}
+        onSearchChange={(val) => {
+          setSearch(val);
+          setPage(1);
+        }}
+        searchPlaceholder="Buscar por producto, SKU, lote o descripción de alerta..."
+        resultCount={visibleAlerts.length}
+        resultLabel={
+          showAcknowledged ? "alerta(s) atendidas" : "alerta(s) pendientes"
+        }
+        hasActiveFilters={hasActiveFilters}
+        onClearFilters={() => {
+          setSearch("");
+          setSeverityFilter("");
+          setPage(1);
+        }}
+        tabs={
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAcknowledged(false);
+                  setPage(1);
+                }}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  !showAcknowledged
+                    ? "bg-white text-slate-900 shadow-2xs dark:bg-slate-900 dark:text-white"
+                    : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                Pendientes
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAcknowledged(true);
+                  setPage(1);
+                }}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  showAcknowledged
+                    ? "bg-white text-slate-900 shadow-2xs dark:bg-slate-900 dark:text-white"
+                    : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                Atendidas
+              </button>
+            </div>
+          </div>
+        }
+        filters={
           <select
             value={severityFilter}
             onChange={(e) => {
@@ -427,53 +548,79 @@ export default function AlertasPage() {
             <option value="MEDIA">Severidad Media</option>
             <option value="BAJA">Severidad Baja</option>
           </select>
-          <input
-            type="text"
-            value={actorName}
-            onChange={(e) => setActorName(e.target.value)}
-            placeholder="Tu nombre (responsable)"
-            aria-label="Nombre del responsable"
-            className="ui-input sm:w-56"
-          />
-        </div>
-      </div>
+        }
+        rightSlot={
+          <div className="flex items-center gap-2">
+            <UserCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+            {editingActor ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={actorName}
+                  onChange={(e) => setActorName(e.target.value)}
+                  onBlur={() => setEditingActor(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") setEditingActor(false);
+                  }}
+                  autoFocus
+                  aria-label="Nombre del responsable"
+                  className="ui-input h-7 w-44 py-0.5 text-xs"
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditingActor(true)}
+                className="text-xs text-slate-600 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400"
+              >
+                Responsable: <strong className="text-slate-900 dark:text-slate-100">{actorName}</strong> (cambiar)
+              </button>
+            )}
+          </div>
+        }
+      />
 
-      {/* Lista de alertas */}
-      <div className="space-y-3">
+      {/* Listado organizado */}
+      <div className="space-y-2.5">
         {loading ? (
           <div className="ui-card p-8 text-center text-sm text-slate-500 dark:text-slate-400">
             Cargando alertas...
           </div>
-        ) : alerts.length === 0 ? (
-          <div className="ui-card p-10 text-center">
-            <Bell className="mx-auto h-9 w-9 text-slate-300 dark:text-slate-600" />
-            <p className="mt-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
-              {showAcknowledged
-                ? "No hay alertas atendidas registradas."
-                : "No hay alertas pendientes en este momento."}
-            </p>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              {!showAcknowledged &&
-                "Ejecuta un escaneo automático si agregaste nuevos lotes recientemente."}
-            </p>
+        ) : visibleAlerts.length === 0 ? (
+          <div className="ui-card">
+            <EmptyState
+              icon={<Bell className="h-6 w-6" />}
+              title={
+                showAcknowledged
+                  ? "No hay alertas atendidas"
+                  : "No hay alertas pendientes"
+              }
+              description={
+                !showAcknowledged
+                  ? "Ejecuta un escaneo automático si registraste o actualizaste lotes recientemente."
+                  : undefined
+              }
+            />
           </div>
         ) : (
           pagedAlerts.items.map((alert) => {
-            const leftBorder =
+            const dotColor =
               alert.severity === "ALTA"
-                ? "border-l-red-500"
+                ? "bg-red-500"
                 : alert.severity === "MEDIA"
-                ? "border-l-amber-500"
-                : "border-l-sky-500";
+                ? "bg-amber-500"
+                : "bg-sky-500";
             return (
               <div
                 key={alert.id}
-                className={`ui-card flex flex-col justify-between gap-4 border-l-4 p-5 transition-shadow hover:shadow-md lg:flex-row lg:items-center ${leftBorder}`}
+                onClick={() => setSelectedAlert(alert)}
+                className="ui-card-interactive flex cursor-pointer flex-col justify-between gap-4 p-4 sm:p-5 lg:flex-row lg:items-center"
               >
                 <div className="min-w-0 flex-1 space-y-1.5">
                   <div className="flex flex-wrap items-center gap-2">
+                    <span className={`h-2 w-2 rounded-full ${dotColor}`} />
                     <SeverityBadge severity={alert.severity} />
-                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
                       {ALERT_TYPE_LABELS[alert.type] ?? alert.type}
                     </span>
                     <span className="tabular-nums text-xs text-slate-400 dark:text-slate-500">
@@ -482,28 +629,31 @@ export default function AlertasPage() {
                     {alert.emailSentAt && (
                       <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
                         <CheckCircle2 className="h-3 w-3" />
-                        Notificada
+                        Telegram
                       </span>
                     )}
                   </div>
-                  <h3 className="break-words text-base font-bold text-slate-900 dark:text-slate-100">
+
+                  <h3 className="break-words text-sm font-bold text-slate-900 dark:text-slate-100 sm:text-base">
                     {alert.title}
                   </h3>
-                  <p className="break-words text-sm text-slate-600 dark:text-slate-300">
+                  <p className="break-words text-xs leading-relaxed text-slate-600 dark:text-slate-300 sm:text-sm">
                     {alert.message}
                   </p>
+
                   {alert.lot && (
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Bodega: <strong>{alert.lot.warehouse.name}</strong> · Lote:{" "}
+                      {alert.lot.warehouse.name} · Lote{" "}
                       <strong className="font-mono text-slate-800 dark:text-slate-200">
                         {alert.lot.lotNumber}
                       </strong>{" "}
-                      · Stock actual:{" "}
+                      · Stock:{" "}
                       <strong className="tabular-nums">
                         {alert.lot.totalUnits} u.
                       </strong>
                     </p>
                   )}
+
                   {alert.acknowledged && alert.acknowledgedBy && (
                     <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
                       Atendida por <strong>{alert.acknowledgedBy}</strong> el{" "}
@@ -512,19 +662,30 @@ export default function AlertasPage() {
                   )}
                 </div>
 
-                <div className="grid shrink-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                <div
+                  className="flex shrink-0 flex-wrap items-center gap-1.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAlert(alert)}
+                    className="ui-btn ui-btn-secondary px-2.5 py-1.5 text-xs"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    Detalle
+                  </button>
                   {alert.lot && (
                     <>
                       <Link
                         href={`/inspecciones?lotId=${alert.lot.id}`}
-                        className="ui-btn ui-btn-secondary px-3 py-2 text-xs sm:py-1.5"
+                        className="ui-btn ui-btn-secondary px-2.5 py-1.5 text-xs"
                       >
                         <ClipboardCheck className="h-3.5 w-3.5" />
                         Inspeccionar
                       </Link>
                       <Link
                         href={`/averias?lotId=${alert.lot.id}`}
-                        className="ui-btn border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-800 hover:bg-orange-100 dark:border-orange-900/70 dark:bg-orange-950/50 dark:text-orange-300 dark:hover:bg-orange-950 sm:py-1.5"
+                        className="ui-btn ui-btn-secondary px-2.5 py-1.5 text-xs text-orange-700 dark:text-orange-300"
                       >
                         <ShieldAlert className="h-3.5 w-3.5" />
                         Avería
@@ -535,16 +696,16 @@ export default function AlertasPage() {
                     <button
                       type="button"
                       onClick={() => handleAcknowledge(alert.id, true)}
-                      className="ui-btn ui-btn-emerald px-3 py-2 text-xs sm:py-1.5"
+                      className="ui-btn ui-btn-primary px-3 py-1.5 text-xs"
                     >
                       <CheckCircle2 className="h-3.5 w-3.5" />
-                      Atendida
+                      Atender
                     </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => handleAcknowledge(alert.id, false)}
-                      className="ui-btn ui-btn-secondary px-3 py-2 text-xs sm:py-1.5"
+                      className="ui-btn ui-btn-secondary px-3 py-1.5 text-xs"
                     >
                       Reabrir
                     </button>
@@ -552,12 +713,11 @@ export default function AlertasPage() {
                   <button
                     type="button"
                     onClick={() => setDeletingAlert(alert)}
-                    title="Eliminar alerta errónea"
+                    title="Eliminar alerta"
                     aria-label={`Eliminar alerta ${alert.title}`}
-                    className="ui-btn col-span-2 border border-red-200 bg-white px-2.5 py-2 text-xs text-red-600 hover:bg-red-50 dark:border-red-900/70 dark:bg-slate-800 dark:text-red-400 dark:hover:bg-red-950/60 sm:col-span-1 sm:py-1.5"
+                    className="ui-btn ui-btn-ghost border border-slate-200 px-2 py-1.5 text-xs text-red-600 hover:border-red-200 hover:bg-red-50 dark:border-slate-700 dark:text-red-400 dark:hover:bg-red-950/50"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                    Eliminar
                   </button>
                 </div>
               </div>
@@ -577,6 +737,146 @@ export default function AlertasPage() {
         }}
         itemLabel="alertas"
       />
+
+      {/* Drawer Detalle y Seguimiento de Alerta */}
+      <DetailDrawer
+        open={Boolean(selectedAlert)}
+        onClose={() => setSelectedAlert(null)}
+        title={selectedAlert?.title ?? ""}
+        subtitle={
+          selectedAlert
+            ? `Creada el ${formatDateTimeES(selectedAlert.createdAt)}`
+            : undefined
+        }
+        icon={<Bell className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />}
+        badge={
+          selectedAlert && (
+            <>
+              <SeverityBadge severity={selectedAlert.severity} />
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                {ALERT_TYPE_LABELS[selectedAlert.type] ?? selectedAlert.type}
+              </span>
+            </>
+          )
+        }
+        footer={
+          selectedAlert && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setDeletingAlert(selectedAlert)}
+                className="ui-btn ui-btn-ghost px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:text-red-400"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Eliminar
+              </button>
+              <div className="flex flex-wrap gap-2">
+                {selectedAlert.lot && (
+                  <Link
+                    href={`/inspecciones?lotId=${selectedAlert.lot.id}`}
+                    className="ui-btn ui-btn-secondary py-1.5 text-xs"
+                  >
+                    <ClipboardCheck className="h-3.5 w-3.5" />
+                    Inspeccionar
+                  </Link>
+                )}
+                {!selectedAlert.acknowledged ? (
+                  <button
+                    type="button"
+                    onClick={() => handleAcknowledge(selectedAlert.id, true)}
+                    className="ui-btn ui-btn-primary py-1.5 text-xs"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Marcar atendida
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleAcknowledge(selectedAlert.id, false)}
+                    className="ui-btn ui-btn-secondary py-1.5 text-xs"
+                  >
+                    Reabrir alerta
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        }
+      >
+        {selectedAlert && (
+          <div className="space-y-5">
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 text-xs dark:border-slate-800 dark:bg-slate-900/50">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Descripción de la Alerta
+              </p>
+              <p className="mt-1.5 text-sm leading-relaxed text-slate-800 dark:text-slate-200">
+                {selectedAlert.message}
+              </p>
+            </div>
+
+            {selectedAlert.lot && (
+              <div className="rounded-xl border border-slate-200 p-4 text-xs dark:border-slate-800">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Lote Asociado
+                </p>
+                <p className="mt-1.5 font-mono text-xs font-bold text-indigo-700 dark:text-indigo-400">
+                  {selectedAlert.lot.product.sku} · Lote{" "}
+                  {selectedAlert.lot.lotNumber}
+                </p>
+                <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {selectedAlert.lot.product.name}
+                </p>
+                <p className="mt-1 text-slate-500 dark:text-slate-400">
+                  {selectedAlert.lot.warehouse.name} · Stock actual:{" "}
+                  <strong className="tabular-nums text-slate-900 dark:text-slate-100">
+                    {selectedAlert.lot.totalUnits} u.
+                  </strong>
+                </p>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-slate-200 p-4 text-xs dark:border-slate-800">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Seguimiento de Atención y Notificación
+              </p>
+              <dl className="mt-2.5 space-y-2">
+                <div className="flex justify-between gap-2">
+                  <dt className="text-slate-500">Notificación Telegram:</dt>
+                  <dd className="tabular-nums font-medium text-slate-900 dark:text-slate-100">
+                    {selectedAlert.emailSentAt
+                      ? formatDateTimeES(selectedAlert.emailSentAt)
+                      : "Pendiente de envío"}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-slate-500">Estado de atención:</dt>
+                  <dd className="font-semibold text-slate-900 dark:text-slate-100">
+                    {selectedAlert.acknowledged ? "Atendida" : "Pendiente"}
+                  </dd>
+                </div>
+                {selectedAlert.acknowledged && selectedAlert.acknowledgedBy && (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-slate-500">Atendida por:</dt>
+                    <dd className="font-medium text-emerald-700 dark:text-emerald-400">
+                      {selectedAlert.acknowledgedBy} (
+                      {formatDateTimeES(selectedAlert.acknowledgedAt)})
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </div>
+
+            {selectedAlert.lot && (
+              <div>
+                <h3 className="mb-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Trazabilidad del Lote
+                </h3>
+                <EntityTimeline entityId={selectedAlert.lot.id} />
+              </div>
+            )}
+          </div>
+        )}
+      </DetailDrawer>
 
       {/* Modal Eliminar Alerta */}
       <Modal
